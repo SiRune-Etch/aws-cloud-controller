@@ -229,9 +229,25 @@ impl App {
                 self.dialog_scroll_offset = self.dialog_scroll_offset.saturating_sub(1);
             }
             AppEvent::Down => {
-                // Limit max scroll to avoid getting lost
-                // Most dialogs are < 30 lines. 20 is a safe upper bound for checking overflow.
-                if self.dialog_scroll_offset < 20 {
+                // Calculate max scroll for current dialog based on window size
+                let (_, h) = self.window_size;
+                
+                let (percent_y, content_lines): (u16, u16) = match self.dialog {
+                    Dialog::Setup => (70, 27),
+                    Dialog::Help => (60, 27),
+                    Dialog::ConfirmTerminate(_) => (30, 12),
+                    Dialog::ScheduleAutoStop(_) => (30, 12),
+                    Dialog::Alert(_) => (25, 10),
+                    Dialog::None => (0, 0),
+                };
+                
+                let chunk_height = h * percent_y / 100;
+                // Subtract 2 for borders
+                let available_height = chunk_height.saturating_sub(2);
+                
+                let max_scroll = content_lines.saturating_sub(available_height);
+                
+                if self.dialog_scroll_offset < max_scroll {
                      self.dialog_scroll_offset += 1;
                 }
             }
