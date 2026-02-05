@@ -36,6 +36,21 @@ pub enum Dialog {
     Alert(String),            // message
 }
 
+/// Toast notification
+#[derive(Debug, Clone)]
+pub struct Toast {
+    pub message: String,
+    pub toast_type: ToastType,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ToastType {
+    Success,
+    Error,
+    Info,
+}
+
 /// Application state
 pub struct App {
     // Core
@@ -71,6 +86,10 @@ pub struct App {
     // Auto-refresh
     pub last_refresh: Option<DateTime<Utc>>,
     pub auto_refresh_interval: Duration,
+    pub boost_refresh_until: Option<DateTime<Utc>>, // Temporarily boost refresh speed
+    
+    // Toast notifications
+    pub toasts: Vec<Toast>,
     
     // Window state
     pub window_size: (u16, u16),
@@ -110,7 +129,9 @@ impl App {
             pending_alerts: Vec::new(),
             last_alert_check: None,
             last_refresh: None,
-            auto_refresh_interval: Duration::from_secs(30), // Auto-refresh every 30 seconds
+            auto_refresh_interval: Duration::from_secs(60), // Auto-refresh every 60 seconds (matches AWS Console)
+            boost_refresh_until: None,
+            toasts: Vec::new(),
             scroll_offset: 0,
             window_size: (80, 24), // Default, will be updated
             dialog_scroll_offset: 0,
@@ -372,11 +393,27 @@ impl App {
             return Ok(());
         }
         
+        // Cleanup old toasts
+        self.cleanup_old_toasts();
+        
         let now = Utc::now();
+        
+        // Determine refresh interval (boost mode uses 5 seconds)
+        let interval = if let Some(boost_until) = self.boost_refresh_until {
+            if now < boost_until {
+                Duration::from_secs(5) // Fast refresh during boost
+            } else {
+                self.boost_refresh_until = None; // Boost expired
+                self.auto_refresh_interval
+            }
+        } else {
+            self.auto_refresh_interval
+        };
+        
         let should_refresh = match self.last_refresh {
             Some(last) => {
                 let elapsed = now.signed_duration_since(last);
-                elapsed.num_seconds() as u64 >= self.auto_refresh_interval.as_secs()
+                elapsed.num_seconds() as u64 >= interval.as_secs()
             }
             None => true, // First time, refresh immediately
         };
@@ -394,24 +431,65 @@ impl App {
             return None;
         }
         
+        let now = Utc::now();
+        
+        // Determine interval (boost mode uses 5 seconds)
+        let interval = if let Some(boost_until) = self.boost_refresh_until {
+            if now < boost_until {
+                Duration::from_secs(5)
+            } else {
+                self.auto_refresh_interval
+            }
+        } else {
+            self.auto_refresh_interval
+        };
+        
         self.last_refresh.map(|last| {
-            let now = Utc::now();
             let elapsed = now.signed_duration_since(last).num_seconds() as u64;
-            self.auto_refresh_interval.as_secs().saturating_sub(elapsed)
+            interval.as_secs().saturating_sub(elapsed)
         })
+    }
+    
+    /// Activate boost refresh mode (5-second intervals for 30 seconds)
+    fn activate_boost_refresh(&mut self) {
+        self.boost_refresh_until = Some(Utc::now() + chrono::Duration::seconds(30));
+    }
+    
+    /// Add a toast notification
+    pub fn add_toast(&mut self, message: String, toast_type: ToastType) {
+        self.toasts.push(Toast {
+            message,
+            toast_type,
+            created_at: Utc::now(),
+        });
+    }
+    
+    /// Remove toasts older than 5 seconds
+    fn cleanup_old_toasts(&mut self) {
+        let now = Utc::now();
+        self.toasts.retain(|toast| {
+            now.signed_duration_since(toast.created_at).num_seconds() < 5
+        });
     }
 
     /// Start the selected EC2 instance
     async fn start_selected_instance(&mut self) -> Result<()> {
         if let Some(instance) = self.ec2_instances.get(self.ec2_selected) {
             let id = instance.id.clone();
+            let name = instance.name.clone();
             self.status_message = format!("Starting {}...", id);
             
-            if let Err(e) = self.aws_client.start_instance(&id).await {
-                self.status_message = format!("Failed to start: {}", e);
-            } else {
-                self.status_message = format!("Started {}", id);
-                self.refresh_data().await?;
+            match self.aws_client.start_instance(&id).await {
+                Ok(_) => {
+                    self.status_message = format!("Started {}", id);
+                    self.add_toast(format!("✓ Started: {}", name), ToastType::Success);
+                    self.activate_boost_refresh();
+                    self.refresh_data().await?;
+                }
+                Err(e) => {
+                    self.status_message = format!("Failed to start: {}", e);
+                    self.add_toast(format!("✗ Failed to start: {}", name), ToastType::Error);
+                }
             }
         }
         Ok(())
@@ -421,13 +499,20 @@ impl App {
     async fn stop_selected_instance(&mut self) -> Result<()> {
         if let Some(instance) = self.ec2_instances.get(self.ec2_selected) {
             let id = instance.id.clone();
+            let name = instance.name.clone();
             self.status_message = format!("Stopping {}...", id);
             
-            if let Err(e) = self.aws_client.stop_instance(&id).await {
-                self.status_message = format!("Failed to stop: {}", e);
-            } else {
-                self.status_message = format!("Stopped {}", id);
-                self.refresh_data().await?;
+            match self.aws_client.stop_instance(&id).await {
+                Ok(_) => {
+                    self.status_message = format!("Stopped {}", id);
+                    self.add_toast(format!("✓ Stopped: {}", name), ToastType::Success);
+                    self.activate_boost_refresh();
+                    self.refresh_data().await?;
+                }
+                Err(e) => {
+                    self.status_message = format!("Failed to stop: {}", e);
+                    self.add_toast(format!("✗ Failed to stop: {}", name), ToastType::Error);
+                }
             }
         }
         Ok(())
@@ -444,13 +529,25 @@ impl App {
 
     /// Terminate an EC2 instance
     async fn terminate_instance(&mut self, instance_id: &str) -> Result<()> {
+        // Find instance name
+        let instance_name = self.ec2_instances.iter()
+            .find(|i| i.id == instance_id)
+            .map(|i| i.name.clone())
+            .unwrap_or_else(|| instance_id.to_string());
+            
         self.status_message = format!("Terminating {}...", instance_id);
         
-        if let Err(e) = self.aws_client.terminate_instance(instance_id).await {
-            self.status_message = format!("Failed to terminate: {}", e);
-        } else {
-            self.status_message = format!("Terminated {}", instance_id);
-            self.refresh_data().await?;
+        match self.aws_client.terminate_instance(instance_id).await {
+            Ok(_) => {
+                self.status_message = format!("Terminated {}", instance_id);
+                self.add_toast(format!("✓ Terminated: {}", instance_name), ToastType::Success);
+                self.activate_boost_refresh();
+                self.refresh_data().await?;
+            }
+            Err(e) => {
+                self.status_message = format!("Failed to terminate: {}", e);
+                self.add_toast(format!("✗ Failed to terminate: {}", instance_name), ToastType::Error);
+            }
         }
         Ok(())
     }
