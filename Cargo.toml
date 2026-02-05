@@ -4,6 +4,9 @@ version = "0.1.0"
 edition = "2021"
 description = "A TUI application for managing AWS EC2 and Lambda resources"
 authors = ["Saikiran"]
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/kingavatar/aws-cloud-controller"
 
 [dependencies]
 # TUI Framework
@@ -38,4 +41,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # System Info
 whoami = "1.5"
-dirs = "5.0"
+
+[profile.release]
+lto = true
+strip = true
+codegen-units = 1
+
