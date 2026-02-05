@@ -280,13 +280,15 @@ impl App {
             Screen::Ec2 => {
                 let len = self.ec2_instances.len();
                 if len > 0 {
-                    self.ec2_selected = ((self.ec2_selected as i32 + delta).rem_euclid(len as i32)) as usize;
+                    let new_idx = self.ec2_selected as i32 + delta;
+                    self.ec2_selected = new_idx.clamp(0, (len - 1) as i32) as usize;
                 }
             }
             Screen::Lambda => {
                 let len = self.lambda_functions.len();
                 if len > 0 {
-                    self.lambda_selected = ((self.lambda_selected as i32 + delta).rem_euclid(len as i32)) as usize;
+                    let new_idx = self.lambda_selected as i32 + delta;
+                    self.lambda_selected = new_idx.clamp(0, (len - 1) as i32) as usize;
                 }
             }
             Screen::Home | Screen::About => {
