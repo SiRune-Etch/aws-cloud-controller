@@ -68,6 +68,10 @@ pub struct App {
     pub pending_alerts: Vec<String>,
     pub last_alert_check: Option<DateTime<Utc>>,
     
+    // Auto-refresh
+    pub last_refresh: Option<DateTime<Utc>>,
+    pub auto_refresh_interval: Duration,
+    
     // Window state
     pub window_size: (u16, u16),
     pub dialog_scroll_offset: u16,
@@ -105,6 +109,8 @@ impl App {
             dialog: initial_dialog,
             pending_alerts: Vec::new(),
             last_alert_check: None,
+            last_refresh: None,
+            auto_refresh_interval: Duration::from_secs(30), // Auto-refresh every 30 seconds
             scroll_offset: 0,
             window_size: (80, 24), // Default, will be updated
             dialog_scroll_offset: 0,
@@ -161,6 +167,9 @@ impl App {
 
             // Check for alerts periodically
             self.check_alerts();
+            
+            // Auto-refresh if interval elapsed
+            self.check_auto_refresh().await?;
 
             if self.should_quit {
                 break;
@@ -352,7 +361,44 @@ impl App {
         }
 
         self.is_loading = false;
+        self.last_refresh = Some(Utc::now());
         Ok(())
+    }
+    
+    /// Check if auto-refresh should trigger
+    async fn check_auto_refresh(&mut self) -> Result<()> {
+        // Skip auto-refresh on About screen or if dialog is open
+        if self.current_screen == Screen::About || self.dialog != Dialog::None {
+            return Ok(());
+        }
+        
+        let now = Utc::now();
+        let should_refresh = match self.last_refresh {
+            Some(last) => {
+                let elapsed = now.signed_duration_since(last);
+                elapsed.num_seconds() as u64 >= self.auto_refresh_interval.as_secs()
+            }
+            None => true, // First time, refresh immediately
+        };
+        
+        if should_refresh {
+            self.refresh_data().await?;
+        }
+        
+        Ok(())
+    }
+    
+    /// Get seconds until next refresh (for UI display)
+    pub fn seconds_until_refresh(&self) -> Option<u64> {
+        if self.current_screen == Screen::About || self.dialog != Dialog::None {
+            return None;
+        }
+        
+        self.last_refresh.map(|last| {
+            let now = Utc::now();
+            let elapsed = now.signed_duration_since(last).num_seconds() as u64;
+            self.auto_refresh_interval.as_secs().saturating_sub(elapsed)
+        })
     }
 
     /// Start the selected EC2 instance

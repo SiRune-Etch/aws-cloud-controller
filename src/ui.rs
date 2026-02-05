@@ -527,12 +527,21 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         .constraints([Constraint::Min(40), Constraint::Length(35)])
         .split(area);
 
-    // Left side: Status message
+    // Left side: Status message with refresh timer
     let loading_indicator = if app.is_loading { "⏳ " } else { "" };
     let alert_count = if app.pending_alerts.is_empty() {
         String::new()
     } else {
         format!(" | 🔔 {} alerts", app.pending_alerts.len())
+    };
+    
+    // Build refresh timer text
+    let refresh_text = if app.is_loading {
+        " | Refreshing...".to_string()
+    } else if let Some(seconds) = app.seconds_until_refresh() {
+        format!(" | Next refresh: {}s", seconds)
+    } else {
+        String::new()
     };
 
     let status = Paragraph::new(Line::from(vec![
@@ -543,6 +552,7 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
             Style::default().fg(Color::DarkGray),
         ),
         Span::styled(alert_count, Style::default().fg(Color::Red)),
+        Span::styled(refresh_text, Style::default().fg(Color::Cyan)),
     ]))
     .block(
         Block::default()
