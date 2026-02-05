@@ -55,7 +55,3 @@ aws-cloud-controller
 - **General**:
   - `?` or `h`: Help
   - `q`: Quit
-
-## License
-
-MIT
