@@ -2,8 +2,6 @@
 
 A powerful terminal-based interface (TUI) for managing AWS resources (EC2, Lambda) directly from your command line.
 
-![Screenshot](media_screenshot_placeholder.png)
-
 ## Features
 
 - **EC2 Management**: List, Start, Stop, and Terminate instances.
