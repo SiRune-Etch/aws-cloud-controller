@@ -6,7 +6,7 @@ description = "A TUI application for managing AWS EC2 and Lambda resources"
 authors = ["Saikiran"]
 license = "MIT"
 readme = "README.md"
-repository = "https://github.com/kingavatar/aws-cloud-controller"
+repository = "https://github.com/SiRune-Etch/aws-cloud-controller"
 
 [dependencies]
 # TUI Framework

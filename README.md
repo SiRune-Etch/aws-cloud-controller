@@ -29,7 +29,7 @@ A powerful terminal-based interface (TUI) for managing AWS resources (EC2, Lambd
 You can install the binary directly from the repository using `cargo`:
 
 ```bash
-cargo install --git https://github.com/kingavatar/aws-cloud-controller
+cargo install --git https://github.com/SiRune-Etch/aws-cloud-controller
 ```
 
 This will compiled the project in release mode and install the `aws-cloud-controller` binary to your `~/.cargo/bin` folder.
