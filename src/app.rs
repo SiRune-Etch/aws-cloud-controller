@@ -45,6 +45,7 @@ pub struct Toast {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(dead_code)] // Info may be used in future
 pub enum ToastType {
     Success,
     Error,
@@ -86,7 +87,7 @@ pub struct App {
     // Auto-refresh
     pub last_refresh: Option<DateTime<Utc>>,
     pub auto_refresh_interval: Duration,
-    pub boost_refresh_until: Option<DateTime<Utc>>, // Temporarily boost refresh speed
+    pub boost_refresh_until_stable: bool, // Boost until all instances reach stable states
     
     // Toast notifications
     pub toasts: Vec<Toast>,
@@ -130,7 +131,7 @@ impl App {
             last_alert_check: None,
             last_refresh: None,
             auto_refresh_interval: Duration::from_secs(60), // Auto-refresh every 60 seconds (matches AWS Console)
-            boost_refresh_until: None,
+            boost_refresh_until_stable: false,
             toasts: Vec::new(),
             scroll_offset: 0,
             window_size: (80, 24), // Default, will be updated
@@ -398,14 +399,16 @@ impl App {
         
         let now = Utc::now();
         
-        // Determine refresh interval (boost mode uses 5 seconds)
-        let interval = if let Some(boost_until) = self.boost_refresh_until {
-            if now < boost_until {
-                Duration::from_secs(5) // Fast refresh during boost
-            } else {
-                self.boost_refresh_until = None; // Boost expired
-                self.auto_refresh_interval
+        // Check if we should disable boost mode (all instances stable)
+        if self.boost_refresh_until_stable {
+            if self.all_instances_stable() {
+                self.boost_refresh_until_stable = false;
             }
+        }
+        
+        // Determine refresh interval (boost mode uses 5 seconds)
+        let interval = if self.boost_refresh_until_stable {
+            Duration::from_secs(5) // Fast refresh during state changes
         } else {
             self.auto_refresh_interval
         };
@@ -434,12 +437,8 @@ impl App {
         let now = Utc::now();
         
         // Determine interval (boost mode uses 5 seconds)
-        let interval = if let Some(boost_until) = self.boost_refresh_until {
-            if now < boost_until {
-                Duration::from_secs(5)
-            } else {
-                self.auto_refresh_interval
-            }
+        let interval = if self.boost_refresh_until_stable {
+            Duration::from_secs(5)
         } else {
             self.auto_refresh_interval
         };
@@ -450,9 +449,16 @@ impl App {
         })
     }
     
-    /// Activate boost refresh mode (5-second intervals for 30 seconds)
+    /// Check if all instances are in stable states
+    fn all_instances_stable(&self) -> bool {
+        self.ec2_instances.iter().all(|instance| {
+            matches!(instance.state.as_str(), "running" | "stopped" | "terminated")
+        })
+    }
+    
+    /// Activate boost refresh mode (until instances stabilize)
     fn activate_boost_refresh(&mut self) {
-        self.boost_refresh_until = Some(Utc::now() + chrono::Duration::seconds(30));
+        self.boost_refresh_until_stable = true;
     }
     
     /// Add a toast notification
