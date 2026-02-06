@@ -16,11 +16,21 @@ A powerful terminal-based interface (TUI) for managing AWS resources (EC2, Lambd
 
 1.  **Rust Toolchain**: Install via [rustup.rs](https://rustup.rs).
 2.  **AWS Credentials**: Configure using `aws configure` or environment variables.
-3.  **Linux Dependencies (Ubuntu/Debian)**:
+3.  **Platform-Specific Dependencies**:
+
+    **Linux (Ubuntu/Debian)**:
     Required for audio support (`rodio`).
+
     ```bash
     sudo apt-get install libasound2-dev pkg-config
     ```
+
+    **Windows**:
+    No additional dependencies required. Audio support works out of the box.
+    Recommended terminals: Windows Terminal, PowerShell, or CMD.
+
+    **macOS**:
+    No additional dependencies required.
 
 ### Install from Source
 
@@ -45,7 +55,7 @@ aws-cloud-controller
 ### Controls
 
 - **Navigation**: `↑`/`↓` or `j`/`k`
-- **Switch Tabs**: `1` (Home), `2` (EC2), `3` (Lambda), `4` (About)
+- **Switch Tabs**: `1` (Home), `2` (EC2), `3` (Lambda), `4` (About), `5` (Logs)
 - **Actions**:
   - `s`: Start Instance
   - `x`: Stop Instance
@@ -54,4 +64,20 @@ aws-cloud-controller
   - `r`: Refresh Data
 - **General**:
   - `?` or `h`: Help
+  - `,`: Settings
   - `q`: Quit
+
+## Configuration
+
+Settings are stored in platform-appropriate locations:
+
+- **Linux**: `$XDG_CONFIG_HOME/aws-cloud-controller/settings.json` (or `~/.config/aws-cloud-controller/`)
+- **macOS**: `~/Library/Application Support/aws-cloud-controller/settings.json`
+- **Windows**: `%APPDATA%\aws-cloud-controller\settings.json`
+
+You can configure:
+
+- Auto-refresh interval (15s, 30s, 60s, 120s, 300s)
+- Alert threshold for long-running instances
+- Sound alerts (enable/disable)
+- Logs panel visibility

@@ -73,7 +73,7 @@ impl AwsClient {
             .describe_instances()
             .send()
             .await
-            .context("Failed to describe EC2 instances")?;
+            .map_err(|e| anyhow::anyhow!("Failed to describe EC2 instances: {:?}", e))?;
 
         let mut instances = Vec::new();
 
@@ -131,7 +131,7 @@ impl AwsClient {
             .instance_ids(instance_id)
             .send()
             .await
-            .context(format!("Failed to start instance {}", instance_id))?;
+            .map_err(|e| anyhow::anyhow!("Failed to start instance {}: {:?}", instance_id, e))?;
         Ok(())
     }
 
@@ -142,7 +142,7 @@ impl AwsClient {
             .instance_ids(instance_id)
             .send()
             .await
-            .context(format!("Failed to stop instance {}", instance_id))?;
+            .map_err(|e| anyhow::anyhow!("Failed to stop instance {}: {:?}", instance_id, e))?;
         Ok(())
     }
 
@@ -153,7 +153,7 @@ impl AwsClient {
             .instance_ids(instance_id)
             .send()
             .await
-            .context(format!("Failed to terminate instance {}", instance_id))?;
+            .map_err(|e| anyhow::anyhow!("Failed to terminate instance {}: {:?}", instance_id, e))?;
         Ok(())
     }
 
@@ -167,7 +167,7 @@ impl AwsClient {
             .list_functions()
             .send()
             .await
-            .context("Failed to list Lambda functions")?;
+            .map_err(|e| anyhow::anyhow!("Failed to list Lambda functions: {:?}", e))?;
 
         let functions = response
             .functions()

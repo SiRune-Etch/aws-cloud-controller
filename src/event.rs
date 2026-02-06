@@ -30,8 +30,16 @@ pub enum AppEvent {
     Schedule,
     /// Show help popup
     ShowHelp,
+    /// Open settings dialog
+    OpenSettings,
+    /// Modify setting value (delta: +1 or -1)
+    ModifySettingValue(i32),
+    /// Cancel settings dialog
+    CancelSettings,
     /// Resize event (width, height)
     Resize(u16, u16),
+    /// Start AWS configuration
+    ConfigureAws,
     /// No action
     None,
 }
@@ -82,6 +90,22 @@ fn map_key_event(key: KeyEvent) -> AppEvent {
         // Help
         (_, KeyCode::Char('?')) => AppEvent::ShowHelp,
         (_, KeyCode::Char('h')) => AppEvent::ShowHelp,
+        
+        // Settings
+        (_, KeyCode::Char(',')) => AppEvent::OpenSettings,
+        
+        // Tab 5 - Logs
+        (_, KeyCode::Char('5')) => AppEvent::NavigateTab(4),
+        
+        // Settings value modification (Left/Right or -/+)
+        (_, KeyCode::Left) | (_, KeyCode::Char('-')) => AppEvent::ModifySettingValue(-1),
+        (_, KeyCode::Right) | (_, KeyCode::Char('+')) | (_, KeyCode::Char('=')) => AppEvent::ModifySettingValue(1),
+        
+        // AWS Config
+        (_, KeyCode::Char('c')) => AppEvent::ConfigureAws,
+        
+        // Escape - cancel settings or close dialogs
+        (_, KeyCode::Esc) => AppEvent::CancelSettings,
         
         _ => AppEvent::None,
     }

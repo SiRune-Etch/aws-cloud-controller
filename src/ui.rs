@@ -9,6 +9,8 @@ use ratatui::{
 };
 
 use crate::app::{App, Dialog, Screen, ToastType};
+use crate::logger::LogLevel;
+use crate::settings::SettingsField;
 
 /// Main render function
 pub fn render(frame: &mut Frame, app: &App) {
@@ -36,7 +38,20 @@ pub fn render(frame: &mut Frame, app: &App) {
 
 /// Render navigation tabs
 fn render_tabs(frame: &mut Frame, app: &App, area: Rect) {
-    let titles = vec!["🏠 Home [1]", "💻 EC2 [2]", "λ Lambda [3]", "ℹ️ About [4]"];
+    let mut titles = vec!["🏠 Home [1]", "💻 EC2 [2]", "λ Lambda [3]", "ℹ️ About [4]"];
+    
+    // Only show Logs tab if enabled (always last)
+    if app.settings.show_logs_panel {
+        titles.push("📋 Logs [5]");
+    }
+    
+    let selected_idx = match app.current_screen {
+        Screen::Home => 0,
+        Screen::Ec2 => 1,
+        Screen::Lambda => 2,
+        Screen::About => 3,
+        Screen::Logs => if app.settings.show_logs_panel { 4 } else { 0 },
+    };
     
     let tabs = Tabs::new(titles)
         .block(
@@ -45,12 +60,7 @@ fn render_tabs(frame: &mut Frame, app: &App, area: Rect) {
                 .title(" AWS Cloud Controller ")
                 .border_style(Style::default().fg(Color::Cyan)),
         )
-        .select(match app.current_screen {
-            Screen::Home => 0,
-            Screen::Ec2 => 1,
-            Screen::Lambda => 2,
-            Screen::About => 3,
-        })
+        .select(selected_idx)
         .style(Style::default().fg(Color::White))
         .highlight_style(
             Style::default()
@@ -82,6 +92,7 @@ fn render_content(frame: &mut Frame, app: &App, area: Rect) {
         Screen::Home => render_home(frame, app, area),
         Screen::Ec2 => render_ec2(frame, app, area),
         Screen::Lambda => render_lambda(frame, app, area),
+        Screen::Logs => render_logs(frame, app, area),
         Screen::About => render_about(frame, app, area),
     }
 }
@@ -523,6 +534,81 @@ fn render_lambda(frame: &mut Frame, _app: &App, area: Rect) {
     frame.render_widget(content, padded_area);
 }
 
+/// Render logs screen
+fn render_logs(frame: &mut Frame, app: &App, area: Rect) {
+    // Render outer block
+    let outer_block = Block::default()
+        .borders(Borders::ALL)
+        .title(format!(" Activity Logs ({}) ", app.log_manager.entries().len()))
+        .border_style(Style::default().fg(Color::Blue));
+    frame.render_widget(outer_block.clone(), area);
+    
+    // Get padded inner area
+    let inner_area = outer_block.inner(area);
+    let padded_area = pad_rect(inner_area, 1, 1, 0, 0);
+    
+    if app.log_manager.entries().is_empty() {
+        let msg = Paragraph::new(vec![
+            Line::from(""),
+            Line::from(Span::styled("No log entries yet.", Style::default().fg(Color::DarkGray))),
+            Line::from(""),
+            Line::from(Span::styled("Logs will appear here as you perform actions.", Style::default().fg(Color::DarkGray))),
+        ])
+        .block(Block::default());
+        frame.render_widget(msg, padded_area);
+        return;
+    }
+    
+    // Create log lines (showing most recent at the bottom)
+    let visible_height = padded_area.height as usize;
+    let entries = app.log_manager.entries();
+    
+    // Filter entries based on verbosity setting
+    let filtered_entries: Vec<&crate::logger::LogEntry> = entries.iter()
+        .filter(|e| app.settings.should_show_log(e.level))
+        .collect();
+        
+    let scroll_offset = app.log_manager.scroll_offset();
+    
+    // Calculate which entries to show
+    let start_idx = filtered_entries.len().saturating_sub(visible_height + scroll_offset);
+    let end_idx = filtered_entries.len().saturating_sub(scroll_offset);
+    
+    let log_lines: Vec<Line> = filtered_entries[start_idx..end_idx]
+        .iter()
+        .map(|entry| {
+            let (level_style, level_icon) = match entry.level {
+                LogLevel::Debug => (Style::default().fg(Color::Magenta), "🔍"),
+                LogLevel::Info => (Style::default().fg(Color::Cyan), "ℹ"),
+                LogLevel::Success => (Style::default().fg(Color::Green), "✓"),
+                LogLevel::Warning => (Style::default().fg(Color::Yellow), "⚠"),
+                LogLevel::Error => (Style::default().fg(Color::Red), "✗"),
+            };
+            
+            let timestamp = entry.timestamp.format("%H:%M:%S").to_string();
+            
+            // Truncate long messages to prevent UI clutter
+            let display_message = if entry.message.len() > 150 {
+                format!("{}...", &entry.message[0..150])
+            } else {
+                entry.message.clone()
+            };
+            
+            Line::from(vec![
+                Span::styled(format!(" {} ", level_icon), level_style),
+                Span::styled(format!("[{}] ", timestamp), Style::default().fg(Color::DarkGray)),
+                Span::styled(display_message, level_style),
+            ])
+        })
+        .collect();
+    
+    let logs = Paragraph::new(log_lines)
+        .block(Block::default())
+        .wrap(Wrap { trim: false });
+    
+    frame.render_widget(logs, padded_area);
+}
+
 /// Render status bar with control hints
 fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
     let chunks = Layout::default()
@@ -547,9 +633,15 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         String::new()
     };
 
+    let status_display = if app.status_message.len() > 100 {
+        format!("{}...", &app.status_message[0..100])
+    } else {
+        app.status_message.clone()
+    };
+
     let status = Paragraph::new(Line::from(vec![
         Span::styled(loading_indicator, Style::default().fg(Color::Yellow)),
-        Span::styled(&app.status_message, Style::default().fg(Color::White)),
+        Span::styled(status_display, Style::default().fg(Color::White)),
         Span::styled(
             format!(" | Region: {}", app.aws_client.region),
             Style::default().fg(Color::DarkGray),
@@ -567,6 +659,12 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
 
     // Right side: Control hints
     let controls = Paragraph::new(Line::from(vec![
+        Span::styled(" c ", Style::default().fg(Color::Black).bg(Color::Cyan)),
+        Span::styled(" AWS Config ", Style::default().fg(Color::Cyan)),
+        Span::raw(" "),
+        Span::styled(" , ", Style::default().fg(Color::Black).bg(Color::Yellow)),
+        Span::styled(" Set ", Style::default().fg(Color::Yellow)),
+        Span::raw(" "),
         Span::styled(" ?/h ", Style::default().fg(Color::Black).bg(Color::Cyan)),
         Span::styled(" Help ", Style::default().fg(Color::Cyan)),
         Span::raw(" "),
@@ -684,6 +782,40 @@ fn render_dialog(frame: &mut Frame, app: &App) {
             ],
             Style::default().fg(Color::Yellow),
         ),
+        Dialog::SessionExpired => {
+            let expired_content = vec![
+                Line::from(""),
+                Line::from(Span::styled("⚠️  AWS Session Token Expired", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD))),
+                Line::from(""),
+                Line::from(Span::styled("Your AWS credentials have expired and need to be refreshed.", Style::default().fg(Color::White))),
+                Line::from(""),
+                Line::from(""),
+                Line::from(Span::styled("How to Fix:", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))),
+                Line::from(""),
+                Line::from(Span::styled("If using AWS SSO:", Style::default().fg(Color::Yellow))),
+                Line::from(Span::styled("  aws sso login --profile <your-profile>", Style::default().fg(Color::Green))),
+                Line::from(""),
+                Line::from(Span::styled("If using temporary credentials:", Style::default().fg(Color::Yellow))),
+                Line::from(Span::styled("  Refresh AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY,", Style::default().fg(Color::White))),
+                Line::from(Span::styled("  and AWS_SESSION_TOKEN environment variables", Style::default().fg(Color::White))),
+                Line::from(""),
+                Line::from(Span::styled("If using assume-role:", Style::default().fg(Color::Yellow))),
+                Line::from(Span::styled("  aws sts assume-role --role-arn <role> --role-session-name <name>", Style::default().fg(Color::Green))),
+                Line::from(""),
+                Line::from(""),
+                Line::from(Span::styled("After refreshing credentials:", Style::default().fg(Color::DarkGray))),
+                Line::from(Span::styled("  Press [r] to retry loading data", Style::default().fg(Color::DarkGray))),
+                Line::from(""),
+                Line::from(vec![
+                    Span::raw("          "),
+                    Span::styled("[Enter/Esc]", Style::default().fg(Color::Green)),
+                    Span::raw(" Dismiss   "),
+                    Span::styled("[r]", Style::default().fg(Color::Cyan)),
+                    Span::raw(" Retry"),
+                ]),
+            ];
+            ((60, 60), " 🔑 Credentials Expired ", expired_content, Style::default().fg(Color::Red))
+        }
         Dialog::Setup => {
             let setup_content = vec![
                 Line::from(""),
@@ -714,6 +846,86 @@ fn render_dialog(frame: &mut Frame, app: &App) {
                 ]),
             ];
             ((70, 70), " 🔧 AWS Setup Required ", setup_content, Style::default().fg(Color::Yellow))
+        }
+        Dialog::ConfigureAws => {
+            let config_content = vec![
+                Line::from(""),
+                Line::from(Span::styled("🔧 AWS Configuration Options", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))),
+                Line::from(""),
+                Line::from("Switch between different credentials or update your login:"),
+                Line::from(""),
+                Line::from(Span::styled("Option 1: AWS SSO Login", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD))),
+                Line::from("  aws sso login --profile <my-profile>"),
+                Line::from(""),
+                Line::from(Span::styled("Option 2: Assume Role", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD))),
+                Line::from("  export AWS_PROFILE=<profile-name>"),
+                Line::from(""),
+                Line::from(Span::styled("Option 3: Environment Variables", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD))),
+                Line::from("  export AWS_ACCESS_KEY_ID=<key>"),
+                Line::from("  export AWS_SECRET_ACCESS_KEY=<secret>"),
+                Line::from(""),
+                Line::from(Span::styled("Current Status:", Style::default().fg(Color::DarkGray))),
+                Line::from(format!("  AWS Region: {}", app.config.aws_region.clone().unwrap_or_else(|| "default".to_string()))),
+                Line::from(""),
+                Line::from(vec![
+                    Span::raw("             "),
+                    Span::styled("[Enter/Esc]", Style::default().fg(Color::Green)),
+                    Span::raw(" Close"),
+                ]),
+            ];
+            ((60, 50), " ☁️  AWS Configuration ", config_content, Style::default().fg(Color::Cyan))
+        }
+        Dialog::Settings => {
+            // Get the draft settings to display (or current if no draft)
+            let settings = app.settings_draft.as_ref().unwrap_or(&app.settings);
+            
+            // Helper to create a row with highlight if selected
+            let make_row = |name: &str, value: &str, field: SettingsField| -> Line {
+                let is_selected = app.settings_selected_field == field;
+                let name_style = if is_selected {
+                    Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(Color::White)
+                };
+                let value_style = if is_selected {
+                    Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(Color::Green)
+                };
+                let arrow = if is_selected { "▶ " } else { "  " };
+                
+                Line::from(vec![
+                    Span::styled(arrow, Style::default().fg(Color::Yellow)),
+                    Span::styled(format!("{:20}", name), name_style),
+                    Span::styled(format!("< {} >", value), value_style),
+                ])
+            };
+            
+            let settings_content = vec![
+                Line::from(""),
+                Line::from(Span::styled("⚙️  Application Settings", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))),
+                Line::from(""),
+                Line::from(Span::styled("Use ↑/↓ to navigate, ←/→ to change values", Style::default().fg(Color::DarkGray))),
+                Line::from(""),
+                make_row("Refresh Interval", &settings.format_refresh_interval(), SettingsField::RefreshInterval),
+                Line::from(""),
+                make_row("Show Logs Panel", if settings.show_logs_panel { "Yes" } else { "No" }, SettingsField::ShowLogsPanel),
+                Line::from(""),
+                make_row("Log Verbosity", &settings.format_log_level(), SettingsField::LogLevel),
+                Line::from(""),
+                make_row("Alert Threshold", &settings.format_alert_threshold(), SettingsField::AlertThreshold),
+                Line::from(""),
+                make_row("Sound Alerts", if settings.sound_enabled { "On" } else { "Off" }, SettingsField::SoundEnabled),
+                Line::from(""),
+                Line::from(""),
+                Line::from(vec![
+                    Span::styled("[Enter]", Style::default().fg(Color::Green)),
+                    Span::raw(" Save   "),
+                    Span::styled("[Esc]", Style::default().fg(Color::Red)),
+                    Span::raw(" Cancel"),
+                ]),
+            ];
+            ((50, 60), " ⚙️  Settings ", settings_content, Style::default().fg(Color::Magenta))
         }
         Dialog::None => return,
     };

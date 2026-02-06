@@ -13,6 +13,8 @@ use rodio::Source;
 use crate::aws::{AwsClient, Ec2Instance, LambdaFunction};
 use crate::config::AppConfig;
 use crate::event::{poll_event, AppEvent};
+use crate::logger::LogManager;
+use crate::settings::{Settings, SettingsField};
 use crate::ui;
 
 /// Current screen/tab
@@ -22,6 +24,7 @@ pub enum Screen {
     Home,
     Ec2,
     Lambda,
+    Logs,
     About,
 }
 
@@ -31,9 +34,12 @@ pub enum Dialog {
     None,
     Help,                     // Help popup
     Setup,                    // AWS setup instructions
+    Settings,                 // Settings configuration
+    SessionExpired,           // AWS session/token expired
     ConfirmTerminate(String), // instance_id
     ScheduleAutoStop(String), // instance_id  
     Alert(String),            // message
+    ConfigureAws,             // AWS configuration/login instructions
 }
 
 /// Toast notification
@@ -95,6 +101,14 @@ pub struct App {
     // Window state
     pub window_size: (u16, u16),
     pub dialog_scroll_offset: u16,
+    
+    // Settings
+    pub settings: Settings,
+    pub settings_selected_field: SettingsField,
+    pub settings_draft: Option<Settings>, // Draft while editing
+    
+    // Logging
+    pub log_manager: LogManager,
 }
 
 
@@ -104,6 +118,22 @@ impl App {
         let config = AppConfig::default();
         let aws_client = AwsClient::new(config.aws_region.as_deref()).await?;
         
+        // Initialize logger first
+        let mut log_manager = LogManager::new();
+        log_manager.info("Application started".to_string());
+        
+        // Load settings from file
+        let settings = match Settings::load() {
+            Ok(s) => {
+                log_manager.info("Settings loaded successfully".to_string());
+                s
+            }
+            Err(e) => {
+                log_manager.warning(format!("Failed to load settings, using defaults: {}", e));
+                Settings::default()
+            }
+        };
+        
         // Check if AWS credentials are configured by trying a simple operation
         let aws_configured = Self::check_aws_credentials().await;
         let initial_dialog = if aws_configured {
@@ -111,6 +141,12 @@ impl App {
         } else {
             Dialog::Setup
         };
+        
+        if !aws_configured {
+            log_manager.warning("AWS credentials not configured".to_string());
+        } else {
+            log_manager.info("AWS credentials detected".to_string());
+        }
         
         Ok(Self {
             config,
@@ -130,12 +166,16 @@ impl App {
             pending_alerts: Vec::new(),
             last_alert_check: None,
             last_refresh: None,
-            auto_refresh_interval: Duration::from_secs(60), // Auto-refresh every 60 seconds (matches AWS Console)
+            auto_refresh_interval: settings.refresh_interval(),
             boost_refresh_until_stable: false,
             toasts: Vec::new(),
             scroll_offset: 0,
             window_size: (80, 24), // Default, will be updated
             dialog_scroll_offset: 0,
+            settings,
+            settings_selected_field: SettingsField::RefreshInterval,
+            settings_draft: None,
+            log_manager,
         })
     }
     
@@ -217,12 +257,21 @@ impl App {
                     1 => Screen::Ec2,
                     2 => Screen::Lambda,
                     3 => Screen::About,
+                    4 => Screen::Logs,
                     _ => self.current_screen,
+                };
+                
+                // Skip Logs screen if disabled in settings
+                let new_screen = if new_screen == Screen::Logs && !self.settings.show_logs_panel {
+                    self.current_screen
+                } else {
+                    new_screen
                 };
                 
                 if new_screen != self.current_screen {
                     self.current_screen = new_screen;
                     self.scroll_offset = 0;
+                    self.log_manager.info(format!("Navigated to {:?} screen", new_screen));
                 }
             }
             
@@ -246,7 +295,18 @@ impl App {
                 self.window_size = (w, h);
             }
             
-            AppEvent::None => {}
+            AppEvent::OpenSettings => {
+                self.open_settings_dialog();
+            }
+            
+            // These are only used in settings dialog
+            AppEvent::ModifySettingValue(_) | AppEvent::CancelSettings => {}
+            
+            AppEvent::None => {},
+            AppEvent::ConfigureAws => {
+                self.dialog = Dialog::ConfigureAws;
+                self.dialog_scroll_offset = 0;
+            }
         }
 
         Ok(())
@@ -255,31 +315,48 @@ impl App {
     /// Handle events when dialog is open
     async fn handle_dialog_event(&mut self, event: AppEvent) -> Result<()> {
         match event {
-            AppEvent::Quit => self.dialog = Dialog::None,
+            AppEvent::Quit => {
+                if self.dialog == Dialog::Settings {
+                    self.cancel_settings();
+                } else {
+                    self.dialog = Dialog::None;
+                }
+            }
             AppEvent::Up => {
-                self.dialog_scroll_offset = self.dialog_scroll_offset.saturating_sub(1);
+                if self.dialog == Dialog::Settings {
+                    self.navigate_settings_field(true);
+                } else {
+                    self.dialog_scroll_offset = self.dialog_scroll_offset.saturating_sub(1);
+                }
             }
             AppEvent::Down => {
-                // Calculate max scroll for current dialog based on window size
-                let (_, h) = self.window_size;
-                
-                let (percent_y, content_lines): (u16, u16) = match self.dialog {
-                    Dialog::Setup => (70, 27),
-                    Dialog::Help => (60, 27),
-                    Dialog::ConfirmTerminate(_) => (30, 12),
-                    Dialog::ScheduleAutoStop(_) => (30, 12),
-                    Dialog::Alert(_) => (25, 10),
-                    Dialog::None => (0, 0),
-                };
-                
-                let chunk_height = h * percent_y / 100;
-                // Subtract 2 for borders
-                let available_height = chunk_height.saturating_sub(2);
-                
-                let max_scroll = content_lines.saturating_sub(available_height);
-                
-                if self.dialog_scroll_offset < max_scroll {
-                     self.dialog_scroll_offset += 1;
+                if self.dialog == Dialog::Settings {
+                    self.navigate_settings_field(false);
+                } else {
+                    // Calculate max scroll for current dialog based on window size
+                    let (_, h) = self.window_size;
+                    
+                    let (percent_y, content_lines): (u16, u16) = match self.dialog {
+                        Dialog::Setup => (70, 27),
+                        Dialog::Help => (60, 27),
+                        Dialog::Settings => (60, 15),
+                        Dialog::SessionExpired => (60, 25),
+                        Dialog::ConfirmTerminate(_) => (30, 12),
+                        Dialog::ScheduleAutoStop(_) => (30, 12),
+                        Dialog::Alert(_) => (25, 10),
+                        Dialog::ConfigureAws => (50, 20),
+                        Dialog::None => (0, 0),
+                    };
+                    
+                    let chunk_height = h * percent_y / 100;
+                    // Subtract 2 for borders
+                    let available_height = chunk_height.saturating_sub(2);
+                    
+                    let max_scroll = content_lines.saturating_sub(available_height);
+                    
+                    if self.dialog_scroll_offset < max_scroll {
+                         self.dialog_scroll_offset += 1;
+                    }
                 }
             }
             AppEvent::Enter => {
@@ -294,10 +371,28 @@ impl App {
                         self.dialog = Dialog::None;
                         self.schedule_auto_stop(&id, Duration::from_secs(3600))?; // Default 1 hour
                     }
-                    Dialog::Alert(_) | Dialog::Help | Dialog::Setup => {
+                    Dialog::Settings => {
+                        self.save_settings();
+                    }
+                    Dialog::Alert(_) | Dialog::Help | Dialog::Setup | Dialog::SessionExpired | Dialog::ConfigureAws => {
                         self.dialog = Dialog::None;
                     }
                     Dialog::None => {}
+                }
+            }
+            AppEvent::ConfigureAws => {
+                self.dialog = Dialog::ConfigureAws;
+                self.dialog_scroll_offset = 0;
+            }
+            // Settings dialog specific events
+            AppEvent::ModifySettingValue(delta) => {
+                if self.dialog == Dialog::Settings {
+                    self.modify_current_setting(delta);
+                }
+            }
+            AppEvent::CancelSettings => {
+                if self.dialog == Dialog::Settings {
+                    self.cancel_settings();
                 }
             }
             _ => {}
@@ -322,7 +417,7 @@ impl App {
                     self.lambda_selected = new_idx.clamp(0, (len - 1) as i32) as usize;
                 }
             }
-            Screen::Home | Screen::About => {
+            Screen::Home | Screen::About | Screen::Logs => {
                 let (w, h) = self.window_size;
                 // Estimate available height (minus headers, borders, footer)
                 // Tabs(3) + Status(3) + Borders(2) = 8.
@@ -333,6 +428,8 @@ impl App {
                     Screen::Home => if w >= 100 { 18 } else { 25 },
                     // About content height also depends on width (side-by-side vs stacked)
                     Screen::About => if w >= 100 { 30 } else { 58 },
+                    // Logs screen - scroll through log entries
+                    Screen::Logs => 50,
                     _ => 0,
                 };
                 
@@ -357,28 +454,62 @@ impl App {
             Screen::Ec2 | Screen::Home => {
                 match self.aws_client.list_ec2_instances().await {
                     Ok(instances) => {
+                        let count = instances.len();
                         self.ec2_instances = instances;
-                        self.status_message = format!("Loaded {} EC2 instances", self.ec2_instances.len());
+                        self.status_message = format!("Loaded {} EC2 instances", count);
+                        self.log_manager.success(format!("Refreshed EC2: {} instances loaded", count));
                     }
                     Err(e) => {
-                        self.status_message = format!("Error: {}", e);
+                        let error_str = e.to_string();
+                        self.status_message = format!("Error: {}", error_str);
+                        self.log_manager.error(format!("Failed to load EC2 instances: {}", error_str));
+                        
+                        // Debug: log the full error for troubleshooting
+                        self.log_manager.debug(format!("Raw error message for session check: {}", error_str));
+                        
+                        // Check for session expired errors
+                        let is_expired = Self::is_session_expired_error(&error_str);
+                        self.log_manager.debug(format!("Session expired check result: {}", is_expired));
+                        
+                        if is_expired {
+                            self.dialog = Dialog::SessionExpired;
+                            self.dialog_scroll_offset = 0;
+                            self.log_manager.warning("AWS session token expired - credentials need refresh".to_string());
+                        }
                     }
                 }
             }
             Screen::Lambda => {
                 match self.aws_client.list_lambda_functions().await {
                     Ok(functions) => {
+                        let count = functions.len();
                         self.lambda_functions = functions;
-                        self.status_message = format!("Loaded {} Lambda functions", self.lambda_functions.len());
+                        self.status_message = format!("Loaded {} Lambda functions", count);
+                        self.log_manager.success(format!("Refreshed Lambda: {} functions loaded", count));
                     }
                     Err(e) => {
-                        self.status_message = format!("Error: {}", e);
+                        let error_str = e.to_string();
+                        self.status_message = format!("Error: {}", error_str);
+                        self.log_manager.error(format!("Failed to load Lambda functions: {}", error_str));
+                        
+                        // Debug: log the full error for troubleshooting
+                        self.log_manager.debug(format!("Raw error message for session check: {}", error_str));
+                        
+                        // Check for session expired errors
+                        let is_expired = Self::is_session_expired_error(&error_str);
+                        self.log_manager.debug(format!("Session expired check result: {}", is_expired));
+                        
+                        if is_expired {
+                            self.dialog = Dialog::SessionExpired;
+                            self.dialog_scroll_offset = 0;
+                            self.log_manager.warning("AWS session token expired - credentials need refresh".to_string());
+                        }
                     }
                 }
             }
-            Screen::About => {
-                // About screen is static, nothing to refresh
-                self.status_message = "About screen - no data to refresh".to_string();
+            Screen::About | Screen::Logs => {
+                // Static screens, nothing to refresh
+                self.status_message = "Nothing to refresh on this screen".to_string();
             }
         }
 
@@ -489,12 +620,14 @@ impl App {
                 Ok(_) => {
                     self.status_message = format!("Started {}", id);
                     self.add_toast(format!("✓ Started: {}", name), ToastType::Success);
+                    self.log_manager.success(format!("Started EC2 instance: {} ({})", name, id));
                     self.activate_boost_refresh();
                     self.refresh_data().await?;
                 }
                 Err(e) => {
                     self.status_message = format!("Failed to start: {}", e);
                     self.add_toast(format!("✗ Failed to start: {}", name), ToastType::Error);
+                    self.log_manager.error(format!("Failed to start {}: {}", name, e));
                 }
             }
         }
@@ -512,12 +645,14 @@ impl App {
                 Ok(_) => {
                     self.status_message = format!("Stopped {}", id);
                     self.add_toast(format!("✓ Stopped: {}", name), ToastType::Success);
+                    self.log_manager.success(format!("Stopped EC2 instance: {} ({})", name, id));
                     self.activate_boost_refresh();
                     self.refresh_data().await?;
                 }
                 Err(e) => {
                     self.status_message = format!("Failed to stop: {}", e);
                     self.add_toast(format!("✗ Failed to stop: {}", name), ToastType::Error);
+                    self.log_manager.error(format!("Failed to stop {}: {}", name, e));
                 }
             }
         }
@@ -547,12 +682,14 @@ impl App {
             Ok(_) => {
                 self.status_message = format!("Terminated {}", instance_id);
                 self.add_toast(format!("✓ Terminated: {}", instance_name), ToastType::Success);
+                self.log_manager.success(format!("Terminated EC2 instance: {} ({})", instance_name, instance_id));
                 self.activate_boost_refresh();
                 self.refresh_data().await?;
             }
             Err(e) => {
                 self.status_message = format!("Failed to terminate: {}", e);
                 self.add_toast(format!("✗ Failed to terminate: {}", instance_name), ToastType::Error);
+                self.log_manager.error(format!("Failed to terminate {}: {}", instance_name, e));
             }
         }
         Ok(())
@@ -571,12 +708,20 @@ impl App {
     fn schedule_auto_stop(&mut self, instance_id: &str, duration: Duration) -> Result<()> {
         let stop_time = Utc::now() + chrono::Duration::from_std(duration)?;
         
+        // Find instance name for logging
+        let instance_name = self.ec2_instances.iter()
+            .find(|i| i.id == instance_id)
+            .map(|i| i.name.clone())
+            .unwrap_or_else(|| instance_id.to_string());
+        
         // Remove existing schedule for this instance
         self.auto_stop_schedules.retain(|(id, _)| id != instance_id);
         
         // Add new schedule
         self.auto_stop_schedules.push((instance_id.to_string(), stop_time));
         self.status_message = format!("Scheduled auto-stop for {} at {}", instance_id, stop_time.format("%H:%M:%S"));
+        self.add_toast(format!("⏰ Scheduled: {}", instance_name), ToastType::Success);
+        self.log_manager.success(format!("Scheduled auto-stop for {} ({}) at {}", instance_name, instance_id, stop_time.format("%H:%M:%S")));
         
         Ok(())
     }
@@ -597,8 +742,8 @@ impl App {
                     self.status_message = format!("Lambda invocation coming soon: {}", func.name);
                 }
             }
-            Screen::About => {
-                // About screen has no interactive elements
+            Screen::About | Screen::Logs => {
+                // These screens have no interactive elements
             }
         }
         Ok(())
@@ -651,6 +796,80 @@ impl App {
                 }
             }
         }
+    }
+    
+    /// Open the settings dialog
+    fn open_settings_dialog(&mut self) {
+        // Create a draft copy of settings for editing
+        self.settings_draft = Some(self.settings.clone());
+        self.settings_selected_field = SettingsField::RefreshInterval;
+        self.dialog = Dialog::Settings;
+        self.dialog_scroll_offset = 0;
+        self.log_manager.info("Opened settings dialog".to_string());
+    }
+    
+    /// Save settings and close dialog
+    fn save_settings(&mut self) {
+        if let Some(draft) = self.settings_draft.take() {
+            self.settings = draft;
+            self.auto_refresh_interval = self.settings.refresh_interval();
+            
+            // Save to file
+            if let Err(e) = self.settings.save() {
+                self.add_toast(format!("Failed to save settings: {}", e), ToastType::Error);
+                self.log_manager.error(format!("Failed to save settings: {}", e));
+            } else {
+                self.add_toast("Settings saved".to_string(), ToastType::Success);
+                self.log_manager.success("Settings saved".to_string());
+            }
+        }
+        self.dialog = Dialog::None;
+    }
+    
+    /// Cancel settings and close dialog
+    fn cancel_settings(&mut self) {
+        self.settings_draft = None;
+        self.dialog = Dialog::None;
+        self.log_manager.info("Settings dialog cancelled".to_string());
+    }
+    
+    /// Modify the currently selected setting
+    fn modify_current_setting(&mut self, delta: i32) {
+        if let Some(ref mut draft) = self.settings_draft {
+            let forward = delta > 0;
+            match self.settings_selected_field {
+                SettingsField::RefreshInterval => draft.cycle_refresh_interval(forward),
+                SettingsField::ShowLogsPanel => draft.toggle_logs_panel(),
+                SettingsField::LogLevel => draft.cycle_log_level(forward),
+                SettingsField::AlertThreshold => draft.cycle_alert_threshold(forward),
+                SettingsField::SoundEnabled => draft.toggle_sound(),
+            }
+        }
+    }
+    
+    /// Navigate settings fields (used in settings dialog)
+    pub fn navigate_settings_field(&mut self, up: bool) {
+        self.settings_selected_field = if up {
+            self.settings_selected_field.prev()
+        } else {
+            self.settings_selected_field.next()
+        };
+    }
+    
+    /// Check if an error message indicates an expired session/token
+    fn is_session_expired_error(error_msg: &str) -> bool {
+        let error_lower = error_msg.to_lowercase();
+        error_lower.contains("expiredtoken") ||
+        error_lower.contains("expired token") ||
+        error_lower.contains("token is expired") ||
+        error_lower.contains("security token") ||
+        error_lower.contains("invalidtoken") ||
+        error_lower.contains("invalid token") ||
+        error_lower.contains("credentials have expired") ||
+        error_lower.contains("the security token included in the request is expired") ||
+        error_lower.contains("requestexpired") ||
+        error_lower.contains("request has expired") ||
+        error_lower.contains("authfailure")
     }
 }
 

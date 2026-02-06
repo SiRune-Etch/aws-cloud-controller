@@ -6,6 +6,8 @@ mod app;
 mod aws;
 mod config;
 mod event;
+mod logger;
+mod settings;
 mod tui;
 mod ui;
 
