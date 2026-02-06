@@ -4,7 +4,6 @@ version = "0.2.1"
 edition = "2021"
 description = "A TUI application for managing AWS EC2 and Lambda resources"
 authors = ["Saikiran"]
-license = "MIT"
 readme = "README.md"
 repository = "https://github.com/SiRune-Etch/aws-cloud-controller"
 
