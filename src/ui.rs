@@ -783,38 +783,51 @@ fn render_dialog(frame: &mut Frame, app: &App) {
             Style::default().fg(Color::Yellow),
         ),
         Dialog::SessionExpired => {
-            let expired_content = vec![
+            let mut expired_content = vec![
                 Line::from(""),
                 Line::from(Span::styled("⚠️  AWS Session Token Expired", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD))),
                 Line::from(""),
-                Line::from(Span::styled("Your AWS credentials have expired and need to be refreshed.", Style::default().fg(Color::White))),
+                Line::from("Select AWS Profile to refresh (Use ↑/↓, [Enter] Activate):"),
                 Line::from(""),
-                Line::from(""),
-                Line::from(Span::styled("How to Fix:", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))),
-                Line::from(""),
-                Line::from(Span::styled("If using AWS SSO:", Style::default().fg(Color::Yellow))),
-                Line::from(Span::styled("  aws sso login --profile <your-profile>", Style::default().fg(Color::Green))),
-                Line::from(""),
-                Line::from(Span::styled("If using temporary credentials:", Style::default().fg(Color::Yellow))),
-                Line::from(Span::styled("  Refresh AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY,", Style::default().fg(Color::White))),
-                Line::from(Span::styled("  and AWS_SESSION_TOKEN environment variables", Style::default().fg(Color::White))),
-                Line::from(""),
-                Line::from(Span::styled("If using assume-role:", Style::default().fg(Color::Yellow))),
-                Line::from(Span::styled("  aws sts assume-role --role-arn <role> --role-session-name <name>", Style::default().fg(Color::Green))),
-                Line::from(""),
-                Line::from(""),
-                Line::from(Span::styled("After refreshing credentials:", Style::default().fg(Color::DarkGray))),
-                Line::from(Span::styled("  Press [r] to retry loading data", Style::default().fg(Color::DarkGray))),
-                Line::from(""),
-                Line::from(vec![
-                    Span::raw("          "),
-                    Span::styled("[Enter/Esc]", Style::default().fg(Color::Green)),
-                    Span::raw(" Dismiss   "),
-                    Span::styled("[r]", Style::default().fg(Color::Cyan)),
-                    Span::raw(" Retry"),
-                ]),
             ];
-            ((60, 60), " 🔑 Credentials Expired ", expired_content, Style::default().fg(Color::Red))
+            
+            if app.available_profiles.is_empty() {
+                expired_content.push(Line::from(Span::styled("No profiles found in ~/.aws/config", Style::default().fg(Color::Red))));
+            } else {
+                for (i, profile) in app.available_profiles.iter().enumerate() {
+                    let is_selected = i == app.selected_profile_index;
+                    let style = if is_selected {
+                        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().fg(Color::White)
+                    };
+                    let prefix = if is_selected { " > " } else { "   " };
+                    expired_content.push(Line::from(Span::styled(format!("{}{}", prefix, profile), style)));
+                }
+            }
+            
+            expired_content.extend_from_slice(&[
+                Line::from(""),
+                Line::from(Span::styled("Quick Fix:", Style::default().fg(Color::Green))),
+                Line::from("1. Select your profile above"),
+                Line::from("2. Press 'l' (L) to launch browser login"),
+                Line::from("3. After login, press 'r' to retry"),
+                Line::from(""),
+            ]);
+            
+            expired_content.push(Line::from(vec![
+                Span::raw("          "),
+                Span::styled("[Enter]", Style::default().fg(Color::Green)),
+                Span::raw(" Activate   "),
+                Span::styled("[Esc]", Style::default().fg(Color::Green)),
+                Span::raw(" Dismiss   "),
+                Span::styled("[l]", Style::default().fg(Color::Yellow)),
+                Span::raw(" SSO Login   "),
+                Span::styled("[r]", Style::default().fg(Color::Cyan)),
+                Span::raw(" Retry"),
+            ]));
+            
+            ((60, 60), " 🔑 Session Expired ", expired_content, Style::default().fg(Color::Red))
         }
         Dialog::Setup => {
             let setup_content = vec![
@@ -840,39 +853,60 @@ fn render_dialog(frame: &mut Frame, app: &App) {
                 Line::from(Span::styled("After configuring, restart the application.", Style::default().fg(Color::DarkGray))),
                 Line::from(""),
                 Line::from(vec![
-                    Span::raw("            "),
+                    Span::raw("          "),
                     Span::styled("[Enter/Esc]", Style::default().fg(Color::Green)),
-                    Span::raw(" Dismiss"),
+                    Span::raw(" Dismiss   "),
+                    Span::styled("[l]", Style::default().fg(Color::Yellow)),
+                    Span::raw(" SSO Login"),
                 ]),
             ];
             ((70, 70), " 🔧 AWS Setup Required ", setup_content, Style::default().fg(Color::Yellow))
         }
         Dialog::ConfigureAws => {
-            let config_content = vec![
+            let mut config_content = vec![
                 Line::from(""),
                 Line::from(Span::styled("🔧 AWS Configuration Options", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))),
                 Line::from(""),
-                Line::from("Switch between different credentials or update your login:"),
+                Line::from("Select AWS Profile (Use ↑/↓, [Enter] to Activate):"),
                 Line::from(""),
-                Line::from(Span::styled("Option 1: AWS SSO Login", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD))),
-                Line::from("  aws sso login --profile <my-profile>"),
+            ];
+            
+            if app.available_profiles.is_empty() {
+                config_content.push(Line::from(Span::styled("No profiles found in ~/.aws/config", Style::default().fg(Color::Red))));
+            } else {
+                for (i, profile) in app.available_profiles.iter().enumerate() {
+                    let is_selected = i == app.selected_profile_index;
+                    let style = if is_selected {
+                        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().fg(Color::White)
+                    };
+                    let prefix = if is_selected { " > " } else { "   " };
+                    config_content.push(Line::from(Span::styled(format!("{}{}", prefix, profile), style)));
+                }
+            }
+            
+            config_content.extend_from_slice(&[
                 Line::from(""),
-                Line::from(Span::styled("Option 2: Assume Role", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD))),
-                Line::from("  export AWS_PROFILE=<profile-name>"),
-                Line::from(""),
-                Line::from(Span::styled("Option 3: Environment Variables", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD))),
-                Line::from("  export AWS_ACCESS_KEY_ID=<key>"),
-                Line::from("  export AWS_SECRET_ACCESS_KEY=<secret>"),
+                Line::from(Span::styled("Manual Options:", Style::default().fg(Color::DarkGray))),
+                Line::from("  Option 2: Assume Role (export AWS_PROFILE=...)"),
+                Line::from("  Option 3: Env Vars (AWS_ACCESS_KEY_ID, ...)" ),
                 Line::from(""),
                 Line::from(Span::styled("Current Status:", Style::default().fg(Color::DarkGray))),
                 Line::from(format!("  AWS Region: {}", app.config.aws_region.clone().unwrap_or_else(|| "default".to_string()))),
                 Line::from(""),
-                Line::from(vec![
-                    Span::raw("             "),
-                    Span::styled("[Enter/Esc]", Style::default().fg(Color::Green)),
-                    Span::raw(" Close"),
-                ]),
-            ];
+            ]);
+            
+            config_content.push(Line::from(vec![
+                Span::raw("          "),
+                Span::styled("[Enter]", Style::default().fg(Color::Green)),
+                Span::raw(" Activate   "),
+                Span::styled("[Esc]", Style::default().fg(Color::Green)),
+                Span::raw(" Dismiss   "),
+                Span::styled("[l]", Style::default().fg(Color::Yellow)),
+                Span::raw(" SSO Login"),
+            ]));
+            
             ((60, 50), " ☁️  AWS Configuration ", config_content, Style::default().fg(Color::Cyan))
         }
         Dialog::Settings => {
@@ -916,6 +950,8 @@ fn render_dialog(frame: &mut Frame, app: &App) {
                 make_row("Alert Threshold", &settings.format_alert_threshold(), SettingsField::AlertThreshold),
                 Line::from(""),
                 make_row("Sound Alerts", if settings.sound_enabled { "On" } else { "Off" }, SettingsField::SoundEnabled),
+                Line::from(""),
+                make_row("Test Alert Sound", "[ Press Enter ]", SettingsField::TestSound),
                 Line::from(""),
                 Line::from(""),
                 Line::from(vec![

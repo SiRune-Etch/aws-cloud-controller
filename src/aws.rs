@@ -201,3 +201,28 @@ impl AwsClient {
         Ok(payload)
     }
 }
+
+/// List available AWS profiles from ~/.aws/config
+pub fn list_aws_profiles() -> Result<Vec<String>> {
+    let home = dirs::home_dir().context("Could not find home directory")?;
+    let config_path = home.join(".aws").join("config");
+    
+    if !config_path.exists() {
+        return Ok(Vec::new());
+    }
+    
+    let content = std::fs::read_to_string(config_path)?;
+    let mut profiles = Vec::new();
+    
+    for line in content.lines() {
+        let line = line.trim();
+        if line.starts_with("[profile ") && line.ends_with(']') {
+            let profile_name = line.trim_start_matches("[profile ").trim_end_matches(']');
+            profiles.push(profile_name.to_string());
+        } else if line == "[default]" {
+            profiles.push("default".to_string());
+        }
+    }
+    
+    Ok(profiles)
+}

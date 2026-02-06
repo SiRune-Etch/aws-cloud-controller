@@ -40,6 +40,8 @@ pub enum AppEvent {
     Resize(u16, u16),
     /// Start AWS configuration
     ConfigureAws,
+    /// Trigger SSO Login
+    SsoLogin,
     /// No action
     None,
 }
@@ -103,6 +105,7 @@ fn map_key_event(key: KeyEvent) -> AppEvent {
         
         // AWS Config
         (_, KeyCode::Char('c')) => AppEvent::ConfigureAws,
+        (_, KeyCode::Char('l')) => AppEvent::SsoLogin,
         
         // Escape - cancel settings or close dialogs
         (_, KeyCode::Esc) => AppEvent::CancelSettings,

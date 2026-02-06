@@ -232,6 +232,7 @@ pub enum SettingsField {
     LogLevel,
     AlertThreshold,
     SoundEnabled,
+    TestSound,
 }
 
 impl SettingsField {
@@ -242,18 +243,20 @@ impl SettingsField {
             Self::ShowLogsPanel => Self::LogLevel,
             Self::LogLevel => Self::AlertThreshold,
             Self::AlertThreshold => Self::SoundEnabled,
-            Self::SoundEnabled => Self::RefreshInterval,
+            Self::SoundEnabled => Self::TestSound,
+            Self::TestSound => Self::RefreshInterval,
         }
     }
     
     /// Get the previous field
     pub fn prev(&self) -> Self {
         match self {
-            Self::RefreshInterval => Self::SoundEnabled,
+            Self::RefreshInterval => Self::TestSound,
             Self::ShowLogsPanel => Self::RefreshInterval,
             Self::LogLevel => Self::ShowLogsPanel,
             Self::AlertThreshold => Self::LogLevel,
             Self::SoundEnabled => Self::AlertThreshold,
+            Self::TestSound => Self::SoundEnabled,
         }
     }
 }

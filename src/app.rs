@@ -109,6 +109,20 @@ pub struct App {
     
     // Logging
     pub log_manager: LogManager,
+
+    // Async Notifications
+    pub async_tx: std::sync::mpsc::Sender<AsyncNotification>,
+    pub async_rx: std::sync::mpsc::Receiver<AsyncNotification>,
+
+    // AWS Profiles
+    pub available_profiles: Vec<String>,
+    pub selected_profile_index: usize,
+}
+
+#[derive(Debug)]
+pub enum AsyncNotification {
+    SsoLoginSuccess(String, String), // Message, ProfileName
+    SsoLoginFailed(String),
 }
 
 
@@ -148,6 +162,8 @@ impl App {
             log_manager.info("AWS credentials detected".to_string());
         }
         
+        let (async_tx, async_rx) = std::sync::mpsc::channel();
+        
         Ok(Self {
             config,
             aws_client,
@@ -176,6 +192,10 @@ impl App {
             settings_selected_field: SettingsField::RefreshInterval,
             settings_draft: None,
             log_manager,
+            async_tx,
+            async_rx,
+            available_profiles: crate::aws::list_aws_profiles().unwrap_or_default(),
+            selected_profile_index: 0,
         })
     }
     
@@ -225,6 +245,11 @@ impl App {
                 } else {
                     self.ec2_table_state.select(Some(self.ec2_selected));
                 }
+            }
+
+            // Check for async notifications (SSO login results)
+            if let Err(e) = self.check_async_notifications().await {
+                self.log_manager.error(format!("Notification error: {}", e));
             }
 
             // Check for alerts periodically
@@ -307,6 +332,7 @@ impl App {
                 self.dialog = Dialog::ConfigureAws;
                 self.dialog_scroll_offset = 0;
             }
+            AppEvent::SsoLogin => {} // Only handled in dialogs
         }
 
         Ok(())
@@ -325,6 +351,10 @@ impl App {
             AppEvent::Up => {
                 if self.dialog == Dialog::Settings {
                     self.navigate_settings_field(true);
+                } else if matches!(self.dialog, Dialog::ConfigureAws | Dialog::SessionExpired) {
+                    if self.selected_profile_index > 0 {
+                        self.selected_profile_index -= 1;
+                    }
                 } else {
                     self.dialog_scroll_offset = self.dialog_scroll_offset.saturating_sub(1);
                 }
@@ -332,6 +362,10 @@ impl App {
             AppEvent::Down => {
                 if self.dialog == Dialog::Settings {
                     self.navigate_settings_field(false);
+                } else if matches!(self.dialog, Dialog::ConfigureAws | Dialog::SessionExpired) {
+                     if !self.available_profiles.is_empty() && self.selected_profile_index < self.available_profiles.len().saturating_sub(1) {
+                        self.selected_profile_index += 1;
+                    }
                 } else {
                     // Calculate max scroll for current dialog based on window size
                     let (_, h) = self.window_size;
@@ -344,7 +378,7 @@ impl App {
                         Dialog::ConfirmTerminate(_) => (30, 12),
                         Dialog::ScheduleAutoStop(_) => (30, 12),
                         Dialog::Alert(_) => (25, 10),
-                        Dialog::ConfigureAws => (50, 20),
+                        Dialog::ConfigureAws => (50, 30), // Increased for profile list
                         Dialog::None => (0, 0),
                     };
                     
@@ -360,21 +394,30 @@ impl App {
                 }
             }
             AppEvent::Enter => {
-                match &self.dialog {
+                let current_dialog = self.dialog.clone();
+                match current_dialog {
                     Dialog::ConfirmTerminate(id) => {
-                        let id = id.clone();
                         self.dialog = Dialog::None;
                         self.terminate_instance(&id).await?;
                     }
                     Dialog::ScheduleAutoStop(id) => {
-                        let id = id.clone();
                         self.dialog = Dialog::None;
-                        self.schedule_auto_stop(&id, Duration::from_secs(3600))?; // Default 1 hour
+                        self.schedule_auto_stop(&id, Duration::from_secs(3600))?;
                     }
                     Dialog::Settings => {
-                        self.save_settings();
+                        if self.settings_selected_field == SettingsField::TestSound {
+                            self.trigger_test_alert();
+                        } else {
+                            self.save_settings();
+                        }
                     }
-                    Dialog::Alert(_) | Dialog::Help | Dialog::Setup | Dialog::SessionExpired | Dialog::ConfigureAws => {
+                    Dialog::ConfigureAws | Dialog::SessionExpired => {
+                         if !self.available_profiles.is_empty() {
+                             let profile = self.available_profiles[self.selected_profile_index].clone();
+                             self.activate_profile(&profile).await?;
+                         }
+                    }
+                    Dialog::Alert(_) | Dialog::Help | Dialog::Setup => {
                         self.dialog = Dialog::None;
                     }
                     Dialog::None => {}
@@ -393,6 +436,47 @@ impl App {
             AppEvent::CancelSettings => {
                 if self.dialog == Dialog::Settings {
                     self.cancel_settings();
+                } else {
+                    self.dialog = Dialog::None;
+                }
+            }
+            AppEvent::SsoLogin => {
+                if matches!(self.dialog, Dialog::SessionExpired | Dialog::ConfigureAws | Dialog::Setup) {
+                    self.login_with_sso().await?;
+                }
+            }
+            AppEvent::Refresh => {
+                // Allow refreshing even when dialog is open (e.g. for SessionExpired retry)
+                // If SessionExpired, attempting refresh might close it if successful
+                self.refresh_data().await?;
+                
+                // If refresh success (no error), invalidating SessionExpired dialog happens in refresh_data?
+                // refresh_data SETS SessionExpired if error. It doesn't UNSET it if success?
+                // I need to check refresh_data logic. 
+                // Line 453: if successful, it updates data. It doesn't modify self.dialog usually.
+                // So I should close the dialog if refresh succeeds!
+                
+                // But refresh_data returns Result<()>.
+                // It updates status_message.
+                // If I'm in SessionExpired, and I press 'r', I want to close popup if fixed.
+                // Let's modify logic:
+                if self.dialog == Dialog::SessionExpired {
+                     // If refresh works, we should close dialog.
+                     // But refresh_data handles errors by setting Dialog::SessionExpired.
+                     // So if we reset dialog to None BEFORE calling check, it might fail and re-open?
+                     // Or check success.
+                     
+                     // Simpler: Just call refresh_data. If it fails, it re-opens/keeps open SessionExpired.
+                     // If it succeeds, the dialog REMAINS OPEN with old state??
+                     // Yes.
+                     
+                     // So I should explicitly close dialog if refresh succeeds?
+                     // How to know if it succeeded?
+                     // refresh_data doesn't return status.
+                     
+                     // Workaround: Reset dialog to None, then call refresh_data.
+                     self.dialog = Dialog::None;
+                     self.refresh_data().await?;
                 }
             }
             _ => {}
@@ -601,6 +685,60 @@ impl App {
         });
     }
     
+    /// Activate a specific AWS profile
+    pub async fn activate_profile(&mut self, profile_name: &str) -> Result<()> {
+        self.status_message = format!("Switching to profile: {}...", profile_name);
+        self.add_toast(format!("🔄 Switching to profile '{}'...", profile_name), ToastType::Info);
+        
+        // Critical: Set the AWS_PROFILE env var so the new client picks it up
+        std::env::set_var("AWS_PROFILE", profile_name);
+        self.log_manager.info(format!("Set AWS_PROFILE={} and re-initializing client", profile_name));
+        
+        // Re-initialize AWS Client to pick up new credentials
+        match crate::aws::AwsClient::new(self.config.aws_region.as_deref()).await {
+            Ok(client) => {
+                self.aws_client = client;
+                self.aws_configured = true; 
+                self.add_toast(format!("✅ Active Profile: {}", profile_name), ToastType::Success);
+                self.refresh_data().await?;
+            },
+            Err(e) => {
+                self.log_manager.error(format!("Failed to re-init AWS client: {}", e));
+                self.add_toast("Failed to switch profile".to_string(), ToastType::Error);
+            }
+        }
+        Ok(())
+    }
+    
+    /// Check for async notifications from threads
+    pub async fn check_async_notifications(&mut self) -> Result<()> {
+        // Try to receive all pending messages
+        while let Ok(notification) = self.async_rx.try_recv() {
+            match notification {
+                AsyncNotification::SsoLoginSuccess(msg, profile) => {
+                     self.add_toast("✅ Login successful! Activating profile...".to_string(), ToastType::Success);
+                     self.log_manager.success(format!("{}: {}", msg, profile));
+                     
+                     if let Err(e) = self.activate_profile(&profile).await {
+                         self.log_manager.error(format!("Failed to activate profile after login: {}", e));
+                     }
+                }
+                AsyncNotification::SsoLoginFailed(err) => {
+                     // Check for specific SSO config error to show cleaner message
+                     if err.contains("Missing the following required SSO configuration") {
+                         self.add_toast("❌ SSO Config Missing. Run 'aws configure sso'".to_string(), ToastType::Error);
+                         self.log_manager.error(format!("SSO Config Error: {}", err));
+                         self.status_message = "SSO Configuration Missing!".to_string();
+                     } else {
+                         self.add_toast(format!("❌ Login Failed: {}", err), ToastType::Error);
+                         self.log_manager.error(format!("Login failed: {}", err));
+                     }
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Remove toasts older than 5 seconds
     fn cleanup_old_toasts(&mut self) {
         let now = Utc::now();
@@ -843,6 +981,7 @@ impl App {
                 SettingsField::LogLevel => draft.cycle_log_level(forward),
                 SettingsField::AlertThreshold => draft.cycle_alert_threshold(forward),
                 SettingsField::SoundEnabled => draft.toggle_sound(),
+                SettingsField::TestSound => {} // Action only, no value modification
             }
         }
     }
@@ -878,6 +1017,65 @@ fn format_duration(duration: chrono::Duration) -> String {
     let hours = duration.num_hours();
     let minutes = duration.num_minutes() % 60;
     format!("{}h {}m", hours, minutes)
+}
+
+impl App {
+    /// Trigger a test alert with sound and notification
+    fn trigger_test_alert(&mut self) {
+        play_alert_sound();
+        self.add_toast("🔔 Test Alert: System Sound Working".to_string(), ToastType::Info);
+        self.log_manager.info("Triggered test alert sound".to_string());
+    }
+
+    /// Trigger SSO login via AWS CLI
+    pub async fn login_with_sso(&mut self) -> Result<()> {
+        self.status_message = "Initiating AWS SSO Login...".to_string();
+        self.add_toast("🔑 Starting AWS SSO login... check browser".to_string(), ToastType::Info);
+        
+        let tx = self.async_tx.clone();
+        
+        let profile = if !self.available_profiles.is_empty() {
+             Some(self.available_profiles[self.selected_profile_index].clone())
+        } else {
+             None
+        };
+
+        // Spawn thread to run command and capture output
+        std::thread::spawn(move || {
+            let mut cmd = std::process::Command::new("aws");
+            cmd.arg("sso").arg("login");
+            
+            if let Some(ref p) = profile {
+                cmd.arg("--profile").arg(p);
+            }
+            
+            match cmd.output() // Use output() to capture stdout/stderr
+            {
+                Ok(output) => {
+                    if output.status.success() {
+                        let profile_name = profile.clone().unwrap_or_else(|| "default".to_string());
+                        let _ = tx.send(AsyncNotification::SsoLoginSuccess("Login successful".to_string(), profile_name));
+                    } else {
+                        // Capture stderr
+                        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+                        // Also try stdout if stderr is empty, or combine?
+                        let err_msg = if stderr.trim().is_empty() {
+                            String::from_utf8_lossy(&output.stdout).to_string()
+                        } else {
+                            stderr
+                        };
+                        let _ = tx.send(AsyncNotification::SsoLoginFailed(err_msg));
+                    }
+                }
+                Err(e) => {
+                     let _ = tx.send(AsyncNotification::SsoLoginFailed(e.to_string()));
+                }
+            }
+        });
+        
+        self.log_manager.info("Spawned 'aws sso login' thread".to_string());
+        Ok(())
+    }
 }
 
 /// Play an alert sound using rodio
