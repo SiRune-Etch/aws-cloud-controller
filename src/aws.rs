@@ -36,6 +36,7 @@ pub struct LambdaFunction {
 }
 
 /// AWS Client wrapper
+#[derive(Debug)]
 pub struct AwsClient {
     ec2: Ec2Client,
     lambda: LambdaClient,

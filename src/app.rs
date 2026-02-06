@@ -117,12 +117,15 @@ pub struct App {
     // AWS Profiles
     pub available_profiles: Vec<String>,
     pub selected_profile_index: usize,
+    pub active_profile_name: Option<String>,
 }
 
 #[derive(Debug)]
 pub enum AsyncNotification {
     SsoLoginSuccess(String, String), // Message, ProfileName
     SsoLoginFailed(String),
+    ProfileActivated(crate::aws::AwsClient, String), // Client, ProfileName
+    ProfileActivationFailed(String),
 }
 
 
@@ -196,6 +199,7 @@ impl App {
             async_rx,
             available_profiles: crate::aws::list_aws_profiles().unwrap_or_default(),
             selected_profile_index: 0,
+            active_profile_name: std::env::var("AWS_PROFILE").ok().or(Some("default".to_string())),
         })
     }
     
@@ -689,24 +693,28 @@ impl App {
     pub async fn activate_profile(&mut self, profile_name: &str) -> Result<()> {
         self.status_message = format!("Switching to profile: {}...", profile_name);
         self.add_toast(format!("🔄 Switching to profile '{}'...", profile_name), ToastType::Info);
+        self.is_loading = true; // Enable loading state
         
-        // Critical: Set the AWS_PROFILE env var so the new client picks it up
+        // Critical: Set the AWS_PROFILE env var so the new client picks it up (for THIS thread/process)
         std::env::set_var("AWS_PROFILE", profile_name);
         self.log_manager.info(format!("Set AWS_PROFILE={} and re-initializing client", profile_name));
-        
-        // Re-initialize AWS Client to pick up new credentials
-        match crate::aws::AwsClient::new(self.config.aws_region.as_deref()).await {
-            Ok(client) => {
-                self.aws_client = client;
-                self.aws_configured = true; 
-                self.add_toast(format!("✅ Active Profile: {}", profile_name), ToastType::Success);
-                self.refresh_data().await?;
-            },
-            Err(e) => {
-                self.log_manager.error(format!("Failed to re-init AWS client: {}", e));
-                self.add_toast("Failed to switch profile".to_string(), ToastType::Error);
+
+        let tx = self.async_tx.clone();
+        let region = self.config.aws_region.clone();
+        let profile_name_owned = profile_name.to_string();
+
+        // Spawn background task to init client
+        tokio::spawn(async move {
+            match crate::aws::AwsClient::new(region.as_deref()).await {
+                Ok(client) => {
+                    let _ = tx.send(AsyncNotification::ProfileActivated(client, profile_name_owned));
+                },
+                Err(e) => {
+                    let _ = tx.send(AsyncNotification::ProfileActivationFailed(e.to_string()));
+                }
             }
-        }
+        });
+
         Ok(())
     }
     
@@ -733,6 +741,22 @@ impl App {
                          self.add_toast(format!("❌ Login Failed: {}", err), ToastType::Error);
                          self.log_manager.error(format!("Login failed: {}", err));
                      }
+                }
+                AsyncNotification::ProfileActivated(client, profile_name) => {
+                    self.aws_client = client;
+                    self.aws_configured = true;
+                    self.active_profile_name = Some(profile_name.clone());
+                    self.is_loading = false;
+                    self.dialog = Dialog::None; // Close any open dialogs (Configure/SessionExpired)
+                    self.add_toast(format!("✅ Active Profile: {}", profile_name), ToastType::Success);
+                    if let Err(e) = self.refresh_data().await {
+                        self.log_manager.error(format!("Failed to refresh data after profile switch: {}", e));
+                    }
+                }
+                AsyncNotification::ProfileActivationFailed(err) => {
+                    self.is_loading = false;
+                    self.log_manager.error(format!("Failed to switch profile: {}", err));
+                    self.add_toast("Failed to switch profile".to_string(), ToastType::Error);
                 }
             }
         }

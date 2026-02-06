@@ -34,6 +34,11 @@ pub fn render(frame: &mut Frame, app: &App) {
     
     // Render toasts on top
     render_toasts(frame, app);
+    
+    // Render loading overlay over everything else if active
+    if app.is_loading {
+        draw_loading_overlay(frame, app, frame.area());
+    }
 }
 
 /// Render navigation tabs
@@ -613,7 +618,7 @@ fn render_logs(frame: &mut Frame, app: &App, area: Rect) {
 fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Min(40), Constraint::Length(35)])
+        .constraints([Constraint::Min(40), Constraint::Length(52)]) // Increased from 35 to fit controls
         .split(area);
 
     // Left side: Status message with refresh timer
@@ -796,13 +801,20 @@ fn render_dialog(frame: &mut Frame, app: &App) {
             } else {
                 for (i, profile) in app.available_profiles.iter().enumerate() {
                     let is_selected = i == app.selected_profile_index;
+                    let is_active = app.active_profile_name.as_ref().map(|p| p == profile).unwrap_or(false);
+
                     let style = if is_selected {
                         Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+                    } else if is_active {
+                        Style::default().fg(Color::Green)
                     } else {
                         Style::default().fg(Color::White)
                     };
+                    
                     let prefix = if is_selected { " > " } else { "   " };
-                    expired_content.push(Line::from(Span::styled(format!("{}{}", prefix, profile), style)));
+                    let status_icon = if is_active { " ✅" } else { "" };
+                    
+                    expired_content.push(Line::from(Span::styled(format!("{}{}{}", prefix, profile, status_icon), style)));
                 }
             }
             
@@ -876,13 +888,20 @@ fn render_dialog(frame: &mut Frame, app: &App) {
             } else {
                 for (i, profile) in app.available_profiles.iter().enumerate() {
                     let is_selected = i == app.selected_profile_index;
+                    let is_active = app.active_profile_name.as_ref().map(|p| p == profile).unwrap_or(false);
+                    
                     let style = if is_selected {
                         Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+                    } else if is_active {
+                        Style::default().fg(Color::Green)
                     } else {
                         Style::default().fg(Color::White)
                     };
+                    
                     let prefix = if is_selected { " > " } else { "   " };
-                    config_content.push(Line::from(Span::styled(format!("{}{}", prefix, profile), style)));
+                    let status_icon = if is_active { " ✅" } else { "" };
+                    
+                    config_content.push(Line::from(Span::styled(format!("{}{}{}", prefix, profile, status_icon), style)));
                 }
             }
             
@@ -989,6 +1008,36 @@ fn render_dialog(frame: &mut Frame, app: &App) {
         .wrap(Wrap { trim: true });
 
     frame.render_widget(dialog, padded_area);
+}
+
+fn draw_loading_overlay(f: &mut Frame, app: &App, area: Rect) {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Cyan))
+        .title(" ⏳ Processing ");
+        
+    let area = centered_rect(40, 20, area);
+    f.render_widget(Clear, area); // Clear background
+    f.render_widget(block, area);
+
+    let text = vec![
+        Line::from(""),
+        Line::from(Span::styled(app.status_message.as_str(), Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))),
+        Line::from(""),
+        Line::from("Please wait..."),
+    ];
+
+    let paragraph = Paragraph::new(text)
+        .alignment(ratatui::layout::Alignment::Center)
+        .wrap(Wrap { trim: true });
+        
+    // Inner area for text
+    let inner_area = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(1), Constraint::Min(1), Constraint::Length(1)].as_ref())
+        .split(area)[1];
+        
+    f.render_widget(paragraph, inner_area);
 }
 
 /// Helper to create a centered rect

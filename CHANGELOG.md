@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.1] - 2026-02-07
+
+### Added
+
+- **Async Profile Switching**: Profile activation is now non-blocking and runs in the background.
+- **UI Polish**:
+  - **Loading Overlay**: Visual feedback ("Processing...") during profile switches.
+  - **Active Profile Indicator**: Green checkmark (✅) shows the currently active profile.
+- **Fixes**:
+  - Fixed "Session Expired" dialog not closing automatically.
+  - Fixed Footer layout text overlapping.
+  - Fixed Default Profile not being highlighted on startup.
+
 ## [0.2.0] - 2026-02-07
 
 ### Added
