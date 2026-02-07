@@ -30,6 +30,7 @@ pub enum Dialog {
     ScheduleAutoStop(String), // instance_id  
     Alert(String),            // message
     ConfigureAws,             // AWS configuration/login instructions
+    Changelog,                // View Changelog
 }
 
 /// Toast notification

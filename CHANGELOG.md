@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.3] - 2026-02-07
+
+### Added
+
+- **Changelog Viewer**: Added a new "View Changelog" popup accessible via the 'v' key on the About screen.
+
+### Fixed
+
+- **Dialog Scrolling**: Improved scrolling behavior in Settings and Configure AWS dialogs to allow viewing content beyond the selection list.
+
 ## [0.2.1] - 2026-02-07
 
 ### Added

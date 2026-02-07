@@ -307,6 +307,39 @@ pub fn render_dialog(frame: &mut Frame, app: &App) {
             ];
             ((50, 60), " ⚙️  Settings ", settings_content, Style::default().fg(Color::Magenta))
         }
+        Dialog::Changelog => {
+             let changelog_text = include_str!("../../../CHANGELOG.md");
+             let content: Vec<Line> = changelog_text.lines()
+                 .map(|l: &str| {
+                     if l.starts_with("# ") {
+                         Line::from(Span::styled(l, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD|Modifier::UNDERLINED)))
+                     } else if l.starts_with("## ") {
+                         Line::from(Span::styled(l, Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)))
+                     } else if l.starts_with("### ") {
+                         Line::from(Span::styled(l, Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)))
+                     } else {
+                         // Default text
+                         Line::from(Span::raw(l))
+                     }
+                 })
+                 .collect();
+             
+             let mut final_content = vec![
+                 Line::from(""),
+                 Line::from(vec![
+                     Span::styled("[Esc/Enter]", Style::default().fg(Color::Green)),
+                     Span::raw(" Close   "),
+                     Span::styled("[↑/↓]", Style::default().fg(Color::Yellow)),
+                     Span::raw(" Scroll"),
+                 ]),
+                 Line::from(""),
+                 Line::from(Span::styled("─────────────────────────────────────────", Style::default().fg(Color::DarkGray))),
+                 Line::from(""),
+             ];
+             final_content.extend(content);
+             
+             ((70, 80), " 📜 Changelog ", final_content, Style::default().fg(Color::Cyan))
+        }
         Dialog::None => return,
     };
 

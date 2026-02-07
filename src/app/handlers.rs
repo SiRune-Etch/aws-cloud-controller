@@ -72,6 +72,12 @@ impl App {
                 self.dialog_scroll_offset = 0;
             }
             AppEvent::SsoLogin => {} // Only handled in dialogs
+            AppEvent::ShowChangelog => {
+                if self.current_screen == Screen::About {
+                    self.dialog = Dialog::Changelog;
+                    self.dialog_scroll_offset = 0;
+                }
+            }
         }
 
         Ok(())
@@ -89,47 +95,60 @@ impl App {
             }
             AppEvent::Up => {
                 if self.dialog == Dialog::Settings {
-                    self.navigate_settings_field(true);
+                    if self.settings_selected_field != SettingsField::RefreshInterval {
+                        self.navigate_settings_field(true);
+                        self.ensure_dialog_selection_visible();
+                    } else {
+                        self.dialog_scroll_offset = self.dialog_scroll_offset.saturating_sub(1);
+                    }
                 } else if matches!(self.dialog, Dialog::ConfigureAws | Dialog::SessionExpired) {
                     if self.selected_profile_index > 0 {
                         self.selected_profile_index -= 1;
+                        self.ensure_dialog_selection_visible();
+                    } else {
+                        self.dialog_scroll_offset = self.dialog_scroll_offset.saturating_sub(1);
                     }
                 } else {
                     self.dialog_scroll_offset = self.dialog_scroll_offset.saturating_sub(1);
                 }
             }
             AppEvent::Down => {
+                // Calculate max scroll for current dialog based on window size to handle scrolling past selection
+                let (_, h) = self.window_size;
+                
+                let (percent_y, content_lines): (u16, u16) = match self.dialog {
+                    Dialog::Setup => (70, 27),
+                    Dialog::Help => (60, 27),
+                    Dialog::Settings => (60, 15),
+                    Dialog::SessionExpired => (60, 25),
+                    Dialog::ConfirmTerminate(_) => (30, 12),
+                    Dialog::ScheduleAutoStop(_) => (30, 12),
+                    Dialog::Alert(_) => (25, 10),
+                    Dialog::ConfigureAws => (50, 5 + self.available_profiles.len().max(1) as u16 + 1), // Header + Profiles + Footer
+                    Dialog::Changelog => (70, 50),
+                    Dialog::None => (0, 0),
+                };
+                
+                let chunk_height = h * percent_y / 100;
+                let available_height = chunk_height.saturating_sub(2);
+                let max_scroll = content_lines.saturating_sub(available_height);
+
                 if self.dialog == Dialog::Settings {
-                    self.navigate_settings_field(false);
+                    if self.settings_selected_field != SettingsField::TestSound {
+                        self.navigate_settings_field(false);
+                        self.ensure_dialog_selection_visible();
+                    } else if self.dialog_scroll_offset < max_scroll {
+                        self.dialog_scroll_offset += 1;
+                    }
                 } else if matches!(self.dialog, Dialog::ConfigureAws | Dialog::SessionExpired) {
                      if !self.available_profiles.is_empty() && self.selected_profile_index < self.available_profiles.len().saturating_sub(1) {
                         self.selected_profile_index += 1;
+                        self.ensure_dialog_selection_visible();
+                    } else if self.dialog_scroll_offset < max_scroll {
+                        self.dialog_scroll_offset += 1;
                     }
-                } else {
-                    // Calculate max scroll for current dialog based on window size
-                    let (_, h) = self.window_size;
-                    
-                    let (percent_y, content_lines): (u16, u16) = match self.dialog {
-                        Dialog::Setup => (70, 27),
-                        Dialog::Help => (60, 27),
-                        Dialog::Settings => (60, 15),
-                        Dialog::SessionExpired => (60, 25),
-                        Dialog::ConfirmTerminate(_) => (30, 12),
-                        Dialog::ScheduleAutoStop(_) => (30, 12),
-                        Dialog::Alert(_) => (25, 10),
-                        Dialog::ConfigureAws => (50, 30), // Increased for profile list
-                        Dialog::None => (0, 0),
-                    };
-                    
-                    let chunk_height = h * percent_y / 100;
-                    // Subtract 2 for borders
-                    let available_height = chunk_height.saturating_sub(2);
-                    
-                    let max_scroll = content_lines.saturating_sub(available_height);
-                    
-                    if self.dialog_scroll_offset < max_scroll {
-                         self.dialog_scroll_offset += 1;
-                    }
+                } else if self.dialog_scroll_offset < max_scroll {
+                    self.dialog_scroll_offset += 1;
                 }
             }
             AppEvent::Enter => {
@@ -156,7 +175,7 @@ impl App {
                              self.activate_profile(&profile).await?;
                          }
                     }
-                    Dialog::Alert(_) | Dialog::Help | Dialog::Setup => {
+                    Dialog::Alert(_) | Dialog::Help | Dialog::Setup | Dialog::Changelog => {
                         self.dialog = Dialog::None;
                     }
                     Dialog::None => {}
@@ -261,5 +280,46 @@ impl App {
             }
         }
         Ok(())
+    }
+
+    /// Ensure the selected item in a dialog is visible
+    fn ensure_dialog_selection_visible(&mut self) {
+        let (_, h) = self.window_size;
+        
+        // Get dialog height percentage and top padding (lines before selection)
+        let (percent_y, top_padding) = match self.dialog {
+            Dialog::ConfigureAws | Dialog::SessionExpired => (50, 5), // 5 header lines
+            Dialog::Settings => (60, 5), // 5 header lines
+            _ => return,
+        };
+        
+        let chunk_height = h * percent_y / 100;
+        // Padding: 2 (borders) + 1 (inner top padding) = 3
+        let available_height = chunk_height.saturating_sub(3);
+        
+        // Calculate target line index
+        let target_line = match self.dialog {
+            Dialog::ConfigureAws | Dialog::SessionExpired => {
+                top_padding + self.selected_profile_index as u16
+            },
+            Dialog::Settings => {
+                let idx = match self.settings_selected_field {
+                    SettingsField::RefreshInterval => 0,
+                    SettingsField::ShowLogsPanel => 1,
+                    SettingsField::LogLevel => 2,
+                    SettingsField::AlertThreshold => 3,
+                    SettingsField::SoundEnabled => 4,
+                    SettingsField::TestSound => 5,
+                };
+                top_padding + (idx * 2)
+            },
+            _ => 0,
+        };
+
+        if target_line < self.dialog_scroll_offset {
+            self.dialog_scroll_offset = target_line;
+        } else if target_line >= self.dialog_scroll_offset + available_height {
+            self.dialog_scroll_offset = target_line.saturating_sub(available_height).saturating_add(1);
+        }
     }
 }

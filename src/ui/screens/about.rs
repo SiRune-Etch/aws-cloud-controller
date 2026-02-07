@@ -127,12 +127,27 @@ pub fn render_about(frame: &mut Frame, app: &App, area: Rect) {
             .wrap(Wrap { trim: true });
 
         frame.render_widget(credits, credits_padded);
+        
+        // Changelog hint
+        let hint = Paragraph::new(Line::from(Span::styled("(Press 'v' to view Changelog)", Style::default().fg(Color::DarkGray))))
+            .alignment(ratatui::layout::Alignment::Center);
+        
+        let hint_area = Rect {
+            x: chunks[1].x,
+            y: chunks[1].y + chunks[1].height.saturating_sub(1),
+            width: chunks[1].width,
+            height: 1,
+        };
+        
+        frame.render_widget(hint, hint_area);
     } else {
         // Narrow layout: Combined content
         let mut combined_content = about_content;
         combined_content.push(Line::from(""));
         combined_content.push(Line::from(""));
         combined_content.push(Line::from(Span::styled("────────── CREDITS ──────────", Style::default().fg(Color::Blue))));
+        combined_content.push(Line::from(""));
+        combined_content.push(Line::from(Span::styled("(Press 'v' to view Changelog)", Style::default().fg(Color::DarkGray))));
         combined_content.extend(credits_text);
         
         let content = Paragraph::new(combined_content)

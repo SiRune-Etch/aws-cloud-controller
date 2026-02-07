@@ -42,6 +42,8 @@ pub enum AppEvent {
     ConfigureAws,
     /// Trigger SSO Login
     SsoLogin,
+    /// View Changelog
+    ShowChangelog,
     /// No action
     None,
 }
@@ -76,6 +78,9 @@ fn map_key_event(key: KeyEvent) -> AppEvent {
         (_, KeyCode::Char('2')) => AppEvent::NavigateTab(1),
         (_, KeyCode::Char('3')) => AppEvent::NavigateTab(2),
         (_, KeyCode::Char('4')) => AppEvent::NavigateTab(3),
+
+        // Changelog
+        (_, KeyCode::Char('v')) => AppEvent::ShowChangelog,
         
         // List navigation
         (_, KeyCode::Up) | (_, KeyCode::Char('k')) => AppEvent::Up,
