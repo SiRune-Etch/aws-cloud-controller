@@ -67,6 +67,7 @@ impl LogManager {
     }
     
     /// Convenience method for debug/verbose logs
+    #[allow(dead_code)]
     pub fn debug(&mut self, message: String) {
         self.log(LogLevel::Debug, message);
     }

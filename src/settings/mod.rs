@@ -115,12 +115,10 @@ impl Settings {
         
         let new_idx = if forward {
             (current_idx + 1) % INTERVALS.len()
+        } else if current_idx == 0 {
+            INTERVALS.len() - 1
         } else {
-            if current_idx == 0 {
-                INTERVALS.len() - 1
-            } else {
-                current_idx - 1
-            }
+            current_idx - 1
         };
         
         self.refresh_interval_secs = INTERVALS[new_idx];
@@ -128,23 +126,28 @@ impl Settings {
     
     /// Cycle alert threshold to next value
     pub fn cycle_alert_threshold(&mut self, forward: bool) {
-        const THRESHOLDS: &[u64] = &[1800, 3600, 7200, 14400, 28800]; // 30m, 1h, 2h, 4h, 8h
+        const THRESHOLDS: &[(u64, &str)] = &[
+            (1800, "30m"),
+            (3600, "1h"),
+            (7200, "2h"),
+            (14400, "4h"),
+            (28800, "8h"),
+        ];
         
-        let current_idx = THRESHOLDS.iter()
-            .position(|&x| x == self.alert_threshold_secs)
+        let current_idx = THRESHOLDS
+            .iter()
+            .position(|&(d, _)| d == self.alert_threshold_secs)
             .unwrap_or(1); // Default to 1h if not found
         
         let new_idx = if forward {
             (current_idx + 1) % THRESHOLDS.len()
+        } else if current_idx == 0 {
+            THRESHOLDS.len() - 1
         } else {
-            if current_idx == 0 {
-                THRESHOLDS.len() - 1
-            } else {
-                current_idx - 1
-            }
+            current_idx - 1
         };
         
-        self.alert_threshold_secs = THRESHOLDS[new_idx];
+        self.alert_threshold_secs = THRESHOLDS[new_idx].0;
     }
     
     /// Toggle show logs panel
