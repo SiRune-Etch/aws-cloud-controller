@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.4] - 2026-02-07
+
+### Changed
+
+- **Dependency Upgrades**: Upgraded all dependencies to their latest versions, including `ratatui` (0.30), `aws-sdk` crates, `tokio` (1.49), and `whoami` (2.1).
+- **Sound Alerts**: Temporarily disabled sound alerts due to breaking changes in the `rodio` library. This feature will be restored in a future update.
+
 ## [0.2.3] - 2026-02-07
 
 ### Added
