@@ -72,8 +72,8 @@ pub fn render_home(frame: &mut Frame, app: &App, area: Rect) {
         // Right side: Logo + System info
         let hostname = std::env::var("HOSTNAME")
             .or_else(|_| std::env::var("HOST"))
-            .unwrap_or_else(|_| whoami::fallible::hostname().unwrap_or_else(|_| "unknown".to_string()));
-        let username = whoami::username();
+            .unwrap_or_else(|_| whoami::hostname().unwrap_or("unknown".to_string()));
+        let username = whoami::username().unwrap_or("unknown".to_string());
         let os_info = format!("{} {}", std::env::consts::OS, std::env::consts::ARCH);
         
         let right_lines = vec![
@@ -131,8 +131,8 @@ pub fn render_home(frame: &mut Frame, app: &App, area: Rect) {
         // Narrow layout: stacked vertically
         let hostname = std::env::var("HOSTNAME")
             .or_else(|_| std::env::var("HOST"))
-            .unwrap_or_else(|_| whoami::fallible::hostname().unwrap_or_else(|_| "unknown".to_string()));
-        let username = whoami::username();
+            .unwrap_or_else(|_| whoami::hostname().unwrap_or("unknown".to_string()));
+        let username = whoami::username().unwrap_or("unknown".to_string());
         let os_info = format!("{} {}", std::env::consts::OS, std::env::consts::ARCH);
         
         let stacked_lines = vec![

@@ -9,38 +9,38 @@ repository = "https://github.com/SiRune-Etch/aws-cloud-controller"
 
 [dependencies]
 # TUI Framework
-ratatui = "0.29"
-crossterm = "0.28"
+ratatui = "0.30.0"
+crossterm = "0.29.0"
 
 # Async Runtime
-tokio = { version = "1", features = ["full", "sync"] }
+tokio = { version = "1.49.0", features = ["full", "sync"] }
 
 # AWS SDK
-aws-config = { version = "1.5", features = ["behavior-version-latest"] }
-aws-sdk-ec2 = "1.52"
-aws-sdk-lambda = "1.42"
+aws-config = { version = "1.8.13", features = ["behavior-version-latest"] }
+aws-sdk-ec2 = "1.207.0"
+aws-sdk-lambda = "1.115.0"
 
 # Error Handling
-anyhow = "1.0"
-thiserror = "2.0"
+anyhow = "1.0.101"
+thiserror = "2.0.18"
 
 # Time & Scheduling
-chrono = { version = "0.4", features = ["serde"] }
+chrono = { version = "0.4.43", features = ["serde"] }
 
 # Audio Alerts
-rodio = "0.19"
+rodio = "0.21.1"
 
 # Serialization
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
 
 # Logging
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
 
 # System Info
-whoami = "1.5"
-dirs = "5.0"
+whoami = "2.1.0"
+dirs = "6.0.0"
 
 [profile.release]
 lto = true

@@ -89,6 +89,6 @@ pub fn render_ec2(frame: &mut Frame, app: &App, area: Rect) {
     .block(Block::default()); // No border
 
     // Use stateful widget for scrolling
-    let mut state = app.ec2_table_state.clone();
+    let mut state = app.ec2_table_state;
     frame.render_stateful_widget(table, padded_area, &mut state);
 }

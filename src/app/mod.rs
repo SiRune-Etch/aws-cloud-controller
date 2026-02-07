@@ -139,7 +139,10 @@ impl App {
     }
 
     /// Main event loop
-    pub async fn run<B: Backend>(&mut self, terminal: &mut Terminal<B>) -> Result<()> {
+    pub async fn run<B: Backend>(&mut self, terminal: &mut Terminal<B>) -> Result<()>
+    where
+        <B as Backend>::Error: Send + Sync + 'static,
+    {
         let tick_rate = Duration::from_millis(self.config.tick_rate_ms);
 
         loop {

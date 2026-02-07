@@ -1,19 +1,20 @@
 use std::time::Duration;
 use anyhow::Result;
 use chrono::Utc;
-use rodio::Source;
+// use rodio::Source;
 use crate::app::state::{App, AsyncNotification, Dialog, Screen, Toast, ToastType};
 use crate::settings::SettingsField;
 
 // Helper function to play sound
 fn play_alert_sound() {
     std::thread::spawn(|| {
-        if let Ok((_stream, stream_handle)) = rodio::OutputStream::try_default() {
-            let source = rodio::source::SineWave::new(880.0)
-                .take_duration(std::time::Duration::from_millis(200));
-            let _ = stream_handle.play_raw(source.convert_samples());
-            std::thread::sleep(std::time::Duration::from_millis(250));
-        }
+        // TODO: Update rodio implementation for 0.21
+        // if let Ok((_stream, stream_handle)) = rodio::OutputStream::try_default() {
+        //     let source = rodio::source::SineWave::new(880.0)
+        //         .take_duration(std::time::Duration::from_millis(200));
+        //     let _ = stream_handle.play_raw(source.convert_samples::<f32>());
+        //     std::thread::sleep(std::time::Duration::from_millis(250));
+        // }
     });
 }
 
