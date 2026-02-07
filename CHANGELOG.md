@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.5] - 2026-02-07
+
+### Added
+
+- **Async Data Refresh**: Application startup and data refreshing are now non-blocking. The UI remains responsive while data is being fetched from AWS.
+- **Loading Indicators**: Changed "Loading..." status to "Fetching data..." to better reflect the background process.
+
 ## [0.2.4] - 2026-02-07
 
 ### Changed

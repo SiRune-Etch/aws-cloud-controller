@@ -55,6 +55,8 @@ pub enum AsyncNotification {
     SsoLoginFailed(String),
     ProfileActivated(crate::aws::AwsClient, String), // Client, ProfileName
     ProfileActivationFailed(String),
+    Ec2Refreshed(Result<Vec<Ec2Instance>, String>),
+    LambdaRefreshed(Result<Vec<LambdaFunction>, String>),
 }
 
 /// Application state

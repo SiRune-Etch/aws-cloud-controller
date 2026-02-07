@@ -48,59 +48,45 @@ impl App {
     // --- Refresh & Data Loading Methods ---
 
     /// Refresh data from AWS
+    /// Refresh data from AWS (non-blocking)
     pub async fn refresh_data(&mut self) -> Result<()> {
         self.is_loading = true;
-        self.status_message = "Loading...".to_string();
+        self.status_message = "Fetching data...".to_string();
 
-        match self.current_screen {
-            Screen::Ec2 | Screen::Home => {
-                match self.aws_client.list_ec2_instances().await {
-                    Ok(instances) => {
-                        let count = instances.len();
-                        self.ec2_instances = instances;
-                        self.status_message = format!("Loaded {} EC2 instances", count);
-                        self.log_manager.success(format!("Refreshed EC2: {} instances loaded", count));
-                    }
-                    Err(e) => {
-                        let error_str = e.to_string();
-                        self.status_message = format!("Error: {}", error_str);
-                        self.log_manager.error(format!("Failed to load EC2 instances: {}", error_str));
-                        
-                        if Self::is_session_expired_error(&error_str) {
-                            self.dialog = Dialog::SessionExpired;
-                            self.dialog_scroll_offset = 0;
-                            self.log_manager.warning("AWS session token expired - credentials need refresh".to_string());
+        let client = self.aws_client.clone();
+        let tx = self.async_tx.clone();
+        let screen = self.current_screen;
+
+        tokio::spawn(async move {
+            match screen {
+                Screen::Ec2 | Screen::Home => {
+                    let result = client.list_ec2_instances().await;
+                    match result {
+                        Ok(instances) => {
+                             let _ = tx.send(AsyncNotification::Ec2Refreshed(Ok(instances)));
+                        }
+                        Err(e) => {
+                             let _ = tx.send(AsyncNotification::Ec2Refreshed(Err(e.to_string())));
                         }
                     }
                 }
-            }
-            Screen::Lambda => {
-                match self.aws_client.list_lambda_functions().await {
-                    Ok(functions) => {
-                        let count = functions.len();
-                        self.lambda_functions = functions;
-                        self.status_message = format!("Loaded {} Lambda functions", count);
-                        self.log_manager.success(format!("Refreshed Lambda: {} functions loaded", count));
-                    }
-                    Err(e) => {
-                        let error_str = e.to_string();
-                        self.status_message = format!("Error: {}", error_str);
-                        self.log_manager.error(format!("Failed to load Lambda functions: {}", error_str));
-                        
-                        if Self::is_session_expired_error(&error_str) {
-                            self.dialog = Dialog::SessionExpired;
-                            self.dialog_scroll_offset = 0;
-                            self.log_manager.warning("AWS session token expired - credentials need refresh".to_string());
+                Screen::Lambda => {
+                    let result = client.list_lambda_functions().await;
+                     match result {
+                        Ok(functions) => {
+                             let _ = tx.send(AsyncNotification::LambdaRefreshed(Ok(functions)));
+                        }
+                        Err(e) => {
+                             let _ = tx.send(AsyncNotification::LambdaRefreshed(Err(e.to_string())));
                         }
                     }
                 }
+                Screen::About | Screen::Logs => {
+                    // No data to fetch
+                }
             }
-            Screen::About | Screen::Logs => {
-                self.status_message = "Nothing to refresh on this screen".to_string();
-            }
-        }
+        });
 
-        self.is_loading = false;
         self.last_refresh = Some(Utc::now());
         Ok(())
     }
@@ -496,6 +482,48 @@ impl App {
                     self.is_loading = false;
                     self.log_manager.error(format!("Failed to switch profile: {}", err));
                     self.add_toast("Failed to switch profile".to_string(), ToastType::Error);
+                }
+                AsyncNotification::Ec2Refreshed(result) => {
+                    self.is_loading = false;
+                    match result {
+                        Ok(instances) => {
+                            let count = instances.len();
+                            self.ec2_instances = instances;
+                            self.status_message = format!("Loaded {} EC2 instances", count);
+                            self.log_manager.success(format!("Refreshed EC2: {} instances loaded", count));
+                        }
+                        Err(error_str) => {
+                            self.status_message = format!("Error: {}", error_str);
+                            self.log_manager.error(format!("Failed to load EC2 instances: {}", error_str));
+                            
+                            if Self::is_session_expired_error(&error_str) {
+                                self.dialog = Dialog::SessionExpired;
+                                self.dialog_scroll_offset = 0;
+                                self.log_manager.warning("AWS session token expired - credentials need refresh".to_string());
+                            }
+                        }
+                    }
+                }
+                AsyncNotification::LambdaRefreshed(result) => {
+                    self.is_loading = false;
+                    match result {
+                        Ok(functions) => {
+                            let count = functions.len();
+                            self.lambda_functions = functions;
+                            self.status_message = format!("Loaded {} Lambda functions", count);
+                            self.log_manager.success(format!("Refreshed Lambda: {} functions loaded", count));
+                        }
+                        Err(error_str) => {
+                            self.status_message = format!("Error: {}", error_str);
+                            self.log_manager.error(format!("Failed to load Lambda functions: {}", error_str));
+                            
+                            if Self::is_session_expired_error(&error_str) {
+                                self.dialog = Dialog::SessionExpired;
+                                self.dialog_scroll_offset = 0;
+                                self.log_manager.warning("AWS session token expired - credentials need refresh".to_string());
+                            }
+                        }
+                    }
                 }
             }
         }
