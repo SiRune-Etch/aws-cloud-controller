@@ -477,6 +477,15 @@ impl App {
                     self.active_profile_name = Some(profile_name.clone());
                     self.is_loading = false;
                     self.dialog = Dialog::None;
+                    
+                    // Persist as default profile
+                    self.settings.default_profile = Some(profile_name.clone());
+                    if let Err(e) = self.settings.save() {
+                        self.log_manager.error(format!("Failed to save default profile setting: {}", e));
+                    } else {
+                        self.log_manager.info(format!("Saved '{}' as default profile", profile_name));
+                    }
+                    
                     self.add_toast(format!("✅ Active Profile: {}", profile_name), ToastType::Success);
                     if let Err(e) = self.refresh_data().await {
                         self.log_manager.error(format!("Failed to refresh data after profile switch: {}", e));

@@ -24,7 +24,6 @@ impl App {
     /// Create a new application instance
     pub async fn new() -> Result<Self> {
         let config = AppConfig::default();
-        let aws_client = AwsClient::new(config.aws_region.as_deref()).await?;
         
         // Initialize logger first
         let mut log_manager = LogManager::new();
@@ -42,7 +41,22 @@ impl App {
             }
         };
         
-        // Check if AWS credentials are configured
+        // Load available profiles
+        let available_profiles = crate::aws::list_aws_profiles().unwrap_or_default();
+        
+        // Set default profile if configured and available
+        if let Some(default_profile) = &settings.default_profile {
+            if available_profiles.contains(default_profile) {
+                std::env::set_var("AWS_PROFILE", default_profile);
+                log_manager.info(format!("Using default profile: {}", default_profile));
+            } else {
+                log_manager.warning(format!("Default profile '{}' not found in available profiles", default_profile));
+            }
+        }
+        
+        // Initialize AWS client (now that AWS_PROFILE is set)
+        let aws_client = AwsClient::new(config.aws_region.as_deref()).await?;
+        
         let aws_configured = Self::check_aws_credentials().await;
         let initial_dialog = if aws_configured {
             Dialog::None
@@ -88,8 +102,12 @@ impl App {
             log_manager,
             async_tx,
             async_rx,
-            available_profiles: crate::aws::list_aws_profiles().unwrap_or_default(),
-            selected_profile_index: 0,
+            available_profiles: available_profiles.clone(),
+            selected_profile_index: if let Ok(current) = std::env::var("AWS_PROFILE") {
+                available_profiles.iter().position(|p| p == &current).unwrap_or(0)
+            } else {
+                0
+            },
             active_profile_name: std::env::var("AWS_PROFILE").ok().or(Some("default".to_string())),
         })
     }

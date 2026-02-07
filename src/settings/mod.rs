@@ -22,6 +22,8 @@ pub struct Settings {
     pub alert_threshold_secs: u64,
     /// Whether sound alerts are enabled
     pub sound_enabled: bool,
+    /// Default AWS profile to load on startup
+    pub default_profile: Option<String>,
 }
 
 fn default_log_level() -> LogLevel {
@@ -36,6 +38,7 @@ impl Default for Settings {
             log_level: LogLevel::Info,     // Show Info and above by default
             alert_threshold_secs: 3600,    // 1 hour
             sound_enabled: true,
+            default_profile: None,
         }
     }
 }
